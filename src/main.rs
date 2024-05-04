@@ -1,10 +1,14 @@
+use std::io::{stdin, Read};
+
 use reqwest::Response;
 use tokio;
 use anyhow::{Result, Context, anyhow};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let query = std::env::var("QUERY").with_context(|| anyhow!("need QUERY env var"))?;
+    let mut query = String::new();
+    stdin().read_to_string(&mut query)
+        .with_context(|| anyhow!("reading from stdin"))?;
     let client = reqwest::Client::new();
     let res: Response = client.post("http://localhost:8081/query")
         .body(query)
