@@ -11,11 +11,13 @@ async fn main() -> Result<()> {
         .with_context(|| anyhow!("reading from stdin"))?;
     let client = reqwest::Client::new();
     let res: Response = client.post("http://localhost:8081/query")
-        .body(query)
+        .body(query.clone())
         .send()
-        .await?;
+        .await
+        .with_context(|| anyhow!("posting the query {query:?}"))?;
     // https://docs.rs/reqwest/0.12.2/reqwest/struct.Response.html
-    let s = res.text().await?;
+    let s = res.text().await
+        .with_context(|| anyhow!("reading the result from query {query:?}"))?;
     println!("{s}");
     Ok(())
 }
