@@ -16,6 +16,7 @@ fn getenv(name: &str) -> Result<Option<String>> {
 
 fn usage(cmd: &str) -> ! {
     eprintln!("usage: {cmd} [endpoint_url]");
+    eprintln!("  The PORT env var can be set to modify the default url.");
     std::process::exit(1);
 }
 
@@ -27,8 +28,17 @@ async fn main() -> Result<()> {
 
     let endpoint_url =
         match args.len() {
-            0 => getenv("ENDPOINT_URL")?
-                .unwrap_or("http://localhost:8081/query".into()),
+            0 =>
+                if let Some(url) = getenv("ENDPOINT_URL")? {
+                    url
+                } else {
+                    let portstr = getenv("PORT")?.unwrap_or_else(|| "8081".into());
+                    let port: u16 =
+                        portstr.parse()
+                        .with_context(
+                            || anyhow!("parsing port string {portstr:?} from PORT env var"))?;
+                    format!("http://localhost:{port}/query")
+                },
             1 =>
                 match &*args[0] {
                     "-h" | "--help" => usage(&cmd),
