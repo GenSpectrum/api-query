@@ -17,21 +17,6 @@ opt-level = 2
 opt-level = "s"
 
 [dependencies]
-structopt = "0.3"
 anyhow = "1.0"
-log = "0.4.8"
-env_logger = "0.8.4"
-rayon = "1.5.3"
-nix = "^0.24.3"
-libc = "0.2.133"
-bstr_parse = "0.1.0"
-thiserror = "1.0.37"
-# kstring = "2.0.0" doesn't compile with rustc 1.48.0
-kstring = { version = "1.0.6", default-features = false }
-tai64 = "4"
-chrono = "^0.4"
-num = "0.4"
-genawaiter = { version = "0.99", default-features = false }
-approx = "0.5"
 reqwest = "0.11.17"
 tokio = { version = "1.36.0", features = ["full"] }
