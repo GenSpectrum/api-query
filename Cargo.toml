@@ -6,6 +6,13 @@ version = "0.1.0"
 authors = ["Christian Jaeger <ch@christianjaeger.ch>"]
 edition = "2018"
 
+[profile.dev]
+panic = "abort"
+lto = "off"
+
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 opt-level = "s"
 
