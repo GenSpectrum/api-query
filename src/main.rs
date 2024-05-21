@@ -52,6 +52,7 @@ async fn main() -> Result<()> {
         .with_context(|| anyhow!("reading from stdin"))?;
     let client = reqwest::Client::new();
     let mut res: Response = client.post(endpoint_url)
+        .header("Connection", "keep-alive") // should be default anyway, but silo doesn't do it
         .body(query.clone())
         .send()
         .await
