@@ -17,6 +17,8 @@ opt-level = 2
 opt-level = "s"
 
 [dependencies]
-anyhow = "1.0"
+anyhow = { version = "1.0.65", features = ["backtrace"]}
+clap = { version = "3", features = ["derive"] }
+terminal_size = "0.2"
 reqwest = { version = "0.11.17", default-features = false, features = [ "cookies", "multipart", "gzip", "brotli", "deflate" ] }
 tokio = { version = "1.36.0", features = ["full"] }
