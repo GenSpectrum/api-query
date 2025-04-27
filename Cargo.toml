@@ -25,3 +25,4 @@ tokio = { version = "1.36.0", features = ["full"] }
 itertools = "0.11.0"
 rand = "0.8.5"
 lazy_static = "1.4"
+futures = "0.3.30"
