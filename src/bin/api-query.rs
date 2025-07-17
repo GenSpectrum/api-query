@@ -78,6 +78,12 @@ enum Command {
         #[clap(short, long)]
         concurrency: Option<u16>,
 
+        /// How many times to repeat the queries from the file
+        /// (default: 1). This is done before randomization, i.e. the
+        /// whole list is kept in memory.
+        #[clap(long, default_value = "1")]
+        repeat: usize,
+
         /// Whether to randomize the order of the requests (default: no)
         #[clap(short, long)]
         randomize: bool,
@@ -354,11 +360,12 @@ async fn main() -> Result<()> {
             outdir,
             drop_output,
             verbose,
+            repeat,
         } => {
             let concurrency: usize = concurrency.unwrap_or(1).max(1).into();
             let output_mode = OutputMode::from_options(outdir, drop_output)?;
 
-            let mut queries: Vec<(u64, Arc<Query>)> = std::io::BufReader::new(
+            let queries_from_file: Vec<(u64, Arc<Query>)> = std::io::BufReader::new(
                 std::fs::File::open(&*queries_path)
                     .with_context(|| anyhow!("opening {queries_path:?} for reading"))?,
             )
@@ -374,6 +381,12 @@ async fn main() -> Result<()> {
                 ))
             })
             .collect::<Result<_>>()?;
+
+            let mut queries = Vec::new();
+            for _ in 0..repeat {
+                queries.append(&mut queries_from_file.clone());
+            }
+
             if randomize {
                 queries.sort();
             }
