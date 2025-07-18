@@ -180,7 +180,7 @@ struct Query {
     /// 0-based line number in the queries file
     line0: usize,
     /// e.g. line from the queries file, or all of stdin
-    string: Arc<str>,
+    string: Arc<String>,
 }
 
 impl Query {
@@ -197,6 +197,15 @@ struct QueryInstance {
     query: Query,
     repetition: usize,
 }
+
+#[test]
+fn t_sizes() {
+    assert_eq!(size_of::<Query>(), 16);
+    assert_eq!(size_of::<[Query; 2]>(), 32);
+    assert_eq!(size_of::<QueryInstance>(), 24);
+    assert_eq!(size_of::<[QueryInstance; 2]>(), 48);
+}
+
 
 impl QueryInstance {
     /// The file name is the line number (1-based) of the queries
