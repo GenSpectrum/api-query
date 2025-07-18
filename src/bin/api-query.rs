@@ -84,6 +84,11 @@ enum Command {
         #[clap(long, default_value = "1")]
         repeat: usize,
 
+        /// Do not run the queries, just show the (possibly
+        /// randomized) list of queries to be issued.
+        #[clap(long)]
+        dry_run: bool,
+
         /// Whether to randomize the order of the requests (default: no)
         #[clap(short, long)]
         randomize: bool,
@@ -395,6 +400,7 @@ async fn main() -> Result<()> {
             drop_output,
             verbose,
             repeat,
+            dry_run,
         } => {
             let concurrency: usize = concurrency.unwrap_or(1).max(1).into();
             let output_mode = OutputMode::from_options(outdir, drop_output)?;
@@ -442,6 +448,13 @@ async fn main() -> Result<()> {
 
                 queries
             };
+
+            if dry_run {
+                for query in queries {
+                    println!("{query:?}");
+                }
+                return Ok(());
+            }
 
             struct TaskResult((StatusCode, usize));
 
