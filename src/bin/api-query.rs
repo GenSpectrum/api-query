@@ -1,5 +1,6 @@
 use std::{
     collections::{hash_map::Entry, HashMap},
+    convert::TryInto,
     fs::{create_dir_all, remove_file, rename},
     io::{BufRead, Read},
     ops::{Deref, DerefMut},
@@ -177,25 +178,17 @@ impl OutputMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Query {
-    /// 0-based line number in the queries file
-    line0: usize,
+    /// 1-based line number in the queries file
+    line: u32,
     /// e.g. line from the queries file, or all of stdin
     string: Arc<String>,
-}
-
-impl Query {
-    /// 1-based line number of the query in the original file
-    pub fn line(&self) -> usize {
-        self.line0
-            .checked_add(1)
-            .expect("line numbers are allocated when reading the file and can't get that high")
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct QueryInstance {
     query: Query,
-    repetition: usize,
+    /// 0-based, i.e. 1 is the first *repetition*
+    repetition: u32,
 }
 
 #[test]
@@ -206,14 +199,13 @@ fn t_sizes() {
     assert_eq!(size_of::<[QueryInstance; 2]>(), 48);
 }
 
-
 impl QueryInstance {
     /// The file name is the line number (1-based) of the queries
     /// file, 0-padded for easy sorting, and the repetition count
     /// (0-based) for that query if a non-1 repetition count was
     /// requested.
     pub fn output_file_name(&self, show_repetition: bool) -> String {
-        let line = self.query.line();
+        let line = self.query.line;
         if show_repetition {
             let repetition = self.repetition;
             format!("{line:06}-{repetition:06}")
@@ -395,7 +387,7 @@ async fn main() -> Result<()> {
                 query_instance: QueryInstance {
                     query: Query {
                         string: query.into(),
-                        line0: 0,
+                        line: 1,
                     }
                     .into(),
                     repetition: 0,
@@ -432,7 +424,11 @@ async fn main() -> Result<()> {
                 .enumerate()
                 .map(|(line0, query_string)| -> Result<_> {
                     Ok(Query {
-                        line0,
+                        line: line0
+                            .checked_add(1)
+                            .ok_or_else(|| anyhow!("file with > usize lines?"))?
+                            .try_into()
+                            .with_context(|| anyhow!("file with > u32 lines"))?,
                         string: query_string?.into(),
                     })
                 })
@@ -453,13 +449,18 @@ async fn main() -> Result<()> {
                     queries.shuffle(&mut rng);
                 }
 
-                // line -> seen, for repetition state during fixup
+                // line0 -> seen, for repetition state during fixup
                 // after randomization
-                let mut query_counters: Vec<usize> = vec![0].repeat(queries_from_file.len());
+                let mut query_counters: Vec<u32> = vec![0].repeat(queries_from_file.len());
 
                 for QueryInstance { query, repetition } in &mut queries {
-                    *repetition = query_counters[query.line0];
-                    query_counters[query.line0] += 1;
+                    let line0: u32 = query
+                        .line
+                        .checked_sub(1)
+                        .expect("line was allocated 1-based");
+                    let line0: usize = line0.try_into()?;
+                    *repetition = query_counters[line0];
+                    query_counters[line0] += 1;
                 }
 
                 queries
