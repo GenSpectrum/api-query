@@ -16,7 +16,7 @@ use api_query::{
 };
 use clap::Parser;
 use futures::stream::{FuturesUnordered, StreamExt};
-use rand::random;
+use rand::seq::SliceRandom;
 use reqwest::{Client, Response, StatusCode};
 use tokio::{
     self,
@@ -164,25 +164,48 @@ impl OutputMode {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Query {
-    /// 0-based position in the queries file
-    id: usize,
+    /// 0-based line number in the queries file
+    line0: usize,
     /// e.g. line from the queries file, or all of stdin
     string: Arc<str>,
 }
 
 impl Query {
+    /// 1-based line number of the query in the original file
+    pub fn line(&self) -> usize {
+        self.line0
+            .checked_add(1)
+            .expect("line numbers are allocated when reading the file and can't get that high")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct QueryInstance {
+    query: Query,
+    repetition: usize,
+}
+
+impl QueryInstance {
     /// The file name is the line number (1-based) of the queries
-    /// file, 0-padded for easy sorting.
-    pub fn file_name(&self) -> String {
-        format!("{:06}", self.id + 1)
+    /// file, 0-padded for easy sorting, and the repetition count
+    /// (0-based) for that query if a non-1 repetition count was
+    /// requested.
+    pub fn output_file_name(&self, show_repetition: bool) -> String {
+        let line = self.query.line();
+        if show_repetition {
+            let repetition = self.repetition;
+            format!("{line:06}-{repetition:06}")
+        } else {
+            format!("{line:06}")
+        }
     }
 }
 
 struct RunQuery {
     endpoint_url: Arc<str>,
-    query: Arc<Query>,
+    query_instance: QueryInstance,
 }
 
 impl RunQuery {
@@ -192,32 +215,37 @@ impl RunQuery {
         &self,
         client: PoolGuard<Client, F>,
         output_mode: OutputMode,
+        show_repetition: bool,
     ) -> Result<(StatusCode, usize)> {
         let mut res: Response = client
             .post(&*self.endpoint_url)
             .header("Connection", "keep-alive") // should be default anyway, but silo doesn't do it
-            .body((&*self.query.string).to_owned())
+            .body((&*self.query_instance.query.string).to_owned())
             .send()
             .await
-            .with_context(|| anyhow!("posting the query {:?}", &*self.query))?;
+            .with_context(|| anyhow!("posting the query {:?}", &self.query_instance.query))?;
         let status = res.status();
         let mut outsize = 0;
         if output_mode.is_drop() {
-            while let Some(bytes) = res
-                .chunk()
-                .await
-                .with_context(|| anyhow!("reading the result from query {:?}", self.query))?
-            {
+            while let Some(bytes) = res.chunk().await.with_context(|| {
+                anyhow!(
+                    "reading the result from query {:?}",
+                    self.query_instance.query
+                )
+            })? {
                 outsize += bytes.len();
             }
         } else {
-            let (mut out, outpath) = output_mode.output(&self.query.file_name()).await?;
+            let (mut out, outpath) = output_mode
+                .output(&self.query_instance.output_file_name(show_repetition))
+                .await?;
             let mut outsize = 0;
-            while let Some(bytes) = res
-                .chunk()
-                .await
-                .with_context(|| anyhow!("reading the result from query {:?}", self.query))?
-            {
+            while let Some(bytes) = res.chunk().await.with_context(|| {
+                anyhow!(
+                    "reading the result from query {:?}",
+                    self.query_instance.query
+                )
+            })? {
                 out.write_all(&bytes)
                     .await
                     .with_context(|| anyhow!("writing to stdout"))?;
@@ -335,24 +363,30 @@ async fn main() -> Result<()> {
         Command::Defaults => {
             println!("Default url: {}", default_url(None)?);
         }
+
         Command::Version => bail!("Not currently implemented"),
+
         Command::Stdin => {
             let mut query = String::new();
             std::io::stdin()
                 .read_to_string(&mut query)
                 .with_context(|| anyhow!("reading from stdin"))?;
             let rq = RunQuery {
-                query: Query {
-                    string: query.into(),
-                    id: 0,
-                }
-                .into(),
+                query_instance: QueryInstance {
+                    query: Query {
+                        string: query.into(),
+                        line0: 0,
+                    }
+                    .into(),
+                    repetition: 0,
+                },
                 endpoint_url,
             };
             let client = client_pool.get_item();
-            let (status, _response_len) = rq.run(client, OutputMode::Print).await?;
+            let (status, _response_len) = rq.run(client, OutputMode::Print, false).await?;
             check_status(status)?;
         }
+
         Command::Iter {
             concurrency,
             randomize,
@@ -365,31 +399,49 @@ async fn main() -> Result<()> {
             let concurrency: usize = concurrency.unwrap_or(1).max(1).into();
             let output_mode = OutputMode::from_options(outdir, drop_output)?;
 
-            let queries_from_file: Vec<(u64, Arc<Query>)> = std::io::BufReader::new(
-                std::fs::File::open(&*queries_path)
-                    .with_context(|| anyhow!("opening {queries_path:?} for reading"))?,
-            )
-            .lines()
-            .enumerate()
-            .map(|(id, query)| -> Result<_> {
-                Ok((
-                    random(),
-                    Arc::new(Query {
-                        id,
-                        string: query?.into(),
-                    }),
-                ))
-            })
-            .collect::<Result<_>>()?;
+            let show_repetition = repeat != 1;
 
-            let mut queries = Vec::new();
-            for _ in 0..repeat {
-                queries.append(&mut queries_from_file.clone());
-            }
+            let queries = {
+                let queries_from_file: Vec<Query> = std::io::BufReader::new(
+                    std::fs::File::open(&*queries_path)
+                        .with_context(|| anyhow!("opening {queries_path:?} for reading"))?,
+                )
+                .lines()
+                .enumerate()
+                .map(|(line0, query_string)| -> Result<_> {
+                    Ok(Query {
+                        line0,
+                        string: query_string?.into(),
+                    })
+                })
+                .collect::<Result<_>>()?;
 
-            if randomize {
-                queries.sort();
-            }
+                let mut queries: Vec<QueryInstance> = Vec::new();
+                for _ in 0..repeat {
+                    for query in &queries_from_file {
+                        queries.push(QueryInstance {
+                            repetition: 0,
+                            query: query.clone(),
+                        });
+                    }
+                }
+
+                let mut rng = rand::thread_rng();
+                if randomize {
+                    queries.shuffle(&mut rng);
+                }
+
+                // line -> seen, for repetition state during fixup
+                // after randomization
+                let mut query_counters: Vec<usize> = vec![0].repeat(queries_from_file.len());
+
+                for QueryInstance { query, repetition } in &mut queries {
+                    *repetition = query_counters[query.line0];
+                    query_counters[query.line0] += 1;
+                }
+
+                queries
+            };
 
             struct TaskResult((StatusCode, usize));
 
@@ -437,7 +489,7 @@ async fn main() -> Result<()> {
                 };
 
             let mut queries = queries.iter();
-            while let Some((_, query)) = queries.next() {
+            while let Some(query_instance) = queries.next() {
                 if verbose {
                     println!("while: {running_tasks} of {concurrency}");
                 }
@@ -445,14 +497,14 @@ async fn main() -> Result<()> {
                     await_one_task(&mut tasks, &mut running_tasks).await?;
                 }
                 let task = tokio::spawn({
-                    clone!(query, endpoint_url, client_pool, output_mode,);
+                    clone!(query_instance, endpoint_url, client_pool, output_mode,);
                     async move {
                         let rq = RunQuery {
-                            query,
+                            query_instance,
                             endpoint_url,
                         };
                         let client = client_pool.get_item();
-                        let status = rq.run(client, output_mode).await?;
+                        let status = rq.run(client, output_mode, show_repetition).await?;
                         Ok(TaskResult(status))
                     }
                 });
