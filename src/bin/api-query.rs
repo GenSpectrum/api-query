@@ -208,11 +208,33 @@ struct Queries {
     queries: Vec<Query<'this>>,
 }
 
+fn chomp(s: &str) -> &str {
+    if s.is_empty() {
+        return s;
+    }
+    let i = s.len() - 1;
+    if s.as_bytes()[i] == b'\n' {
+        &s[0..i]
+    } else {
+        s
+    }
+}
+
+#[test]
+fn t_chomp() {
+    let t = chomp;
+    assert_eq!(t("f"), "f");
+    assert_eq!(t(""), "");
+    assert_eq!(t("\n"), "");
+    assert_eq!(t("\n\n"), "\n");
+    assert_eq!(t("abc\ndef\n"), "abc\ndef");
+}
+
 impl Queries {
     fn _new(queries_string: String, split: bool) -> Result<Self> {
         Self::try_new(queries_string, |queries_string| -> Result<_> {
             let queries: Vec<Query> = if split {
-                queries_string
+                chomp(queries_string)
                     .split('\n')
                     .map(|string| Query { string })
                     .collect()
