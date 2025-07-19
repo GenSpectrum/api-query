@@ -83,7 +83,7 @@ enum Command {
 
         /// How many times to repeat the queries from the file
         /// (default: 1). This is done before randomization, i.e. the
-        /// whole list is kept in memory, but only 8 additional bytes
+        /// whole list is kept in memory, but only 4 additional bytes
         /// are used per repetition.
         #[clap(long, default_value = "1")]
         repeat: usize,
@@ -185,19 +185,46 @@ struct Query<'s> {
     string: &'s str,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct QueryInstance {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct QueryReference {
     query_index: u32,
-    /// 0-based, i.e. 1 is the first *repetition*
+}
+
+#[derive(Debug)]
+struct QueryReferenceWithRepetition {
+    query_reference: QueryReference,
     repetition: u32,
+}
+
+/// `queries` just to get the max query id.
+fn query_references_with_repetitions<'r>(
+    queries: &Queries,
+    query_references: &'r [QueryReference],
+) -> impl Iterator<Item = QueryReferenceWithRepetition> + use<'r> {
+    // line0 -> seen, for repetition state
+    let mut query_counters: Vec<u32> = vec![0].repeat(queries.borrow_queries().len());
+
+    query_references
+        .into_iter()
+        .copied()
+        .map(move |query_reference| {
+            let QueryReference { query_index } = query_reference;
+            let i = query_index as usize;
+            let repetition = query_counters[i];
+            query_counters[i] += 1;
+            QueryReferenceWithRepetition {
+                query_reference,
+                repetition,
+            }
+        })
 }
 
 #[test]
 fn t_sizes() {
     assert_eq!(size_of::<Query>(), 16);
     assert_eq!(size_of::<[Query; 2]>(), 32);
-    assert_eq!(size_of::<QueryInstance>(), 8);
-    assert_eq!(size_of::<[QueryInstance; 2]>(), 16);
+    assert_eq!(size_of::<QueryReference>(), 4);
+    assert_eq!(size_of::<[QueryReference; 2]>(), 8);
 }
 
 #[ouroboros::self_referencing]
@@ -270,9 +297,9 @@ impl Queries {
     }
 }
 
-impl QueryInstance {
+impl QueryReferenceWithRepetition {
     pub fn query<'q>(&self, queries: &'q Queries) -> Query<'q> {
-        queries.get_query(self.query_index)
+        queries.get_query(self.query_reference.query_index)
     }
 
     /// The file name is the line number (1-based) of the queries
@@ -280,7 +307,7 @@ impl QueryInstance {
     /// (0-based) for that query if a non-1 repetition count was
     /// requested.
     pub fn output_file_name(&self, show_repetition: bool) -> String {
-        let line = u64::from(self.query_index) + 1;
+        let line = u64::from(self.query_reference.query_index) + 1;
         if show_repetition {
             let repetition = self.repetition;
             format!("{line:06}-{repetition:06}")
@@ -292,7 +319,7 @@ impl QueryInstance {
 
 struct RunQuery {
     endpoint_url: Arc<str>,
-    query_instance: QueryInstance,
+    query_reference_with_repetition: QueryReferenceWithRepetition,
 }
 
 impl RunQuery {
@@ -308,13 +335,18 @@ impl RunQuery {
         let mut res: Response = client
             .post(&*self.endpoint_url)
             .header("Connection", "keep-alive") // should be default anyway, but silo doesn't do it
-            .body(self.query_instance.query(queries).string.to_owned())
+            .body(
+                self.query_reference_with_repetition
+                    .query(queries)
+                    .string
+                    .to_owned(),
+            )
             .send()
             .await
             .with_context(|| {
                 anyhow!(
                     "posting the query {:?}",
-                    self.query_instance.query(queries).string
+                    self.query_reference_with_repetition.query(queries).string
                 )
             })?;
         let status = res.status();
@@ -323,20 +355,24 @@ impl RunQuery {
             while let Some(bytes) = res.chunk().await.with_context(|| {
                 anyhow!(
                     "reading the result from query {:?}",
-                    self.query_instance.query(queries).string
+                    self.query_reference_with_repetition.query(queries).string
                 )
             })? {
                 outsize += bytes.len();
             }
         } else {
             let (mut out, outpath) = output_mode
-                .output(&self.query_instance.output_file_name(show_repetition))
+                .output(
+                    &self
+                        .query_reference_with_repetition
+                        .output_file_name(show_repetition),
+                )
                 .await?;
             let mut outsize = 0;
             while let Some(bytes) = res.chunk().await.with_context(|| {
                 anyhow!(
                     "reading the result from query {:?}",
-                    self.query_instance.query(queries).string
+                    self.query_reference_with_repetition.query(queries).string
                 )
             })? {
                 out.write_all(&bytes)
@@ -466,8 +502,8 @@ async fn main() -> Result<()> {
                 .with_context(|| anyhow!("reading from stdin"))?;
             let queries = Queries::from_single_query(query_string)?;
             let rq = RunQuery {
-                query_instance: QueryInstance {
-                    query_index: 0,
+                query_reference_with_repetition: QueryReferenceWithRepetition {
+                    query_reference: QueryReference { query_index: 0 },
                     repetition: 0,
                 },
                 endpoint_url,
@@ -499,12 +535,11 @@ async fn main() -> Result<()> {
                     .with_context(|| anyhow!("reading {queries_path:?}"))?,
             )?));
 
-            let query_instances = {
-                let mut query_instances: Vec<QueryInstance> = Vec::new();
+            let query_references = {
+                let mut query_references: Vec<QueryReference> = Vec::new();
                 for _ in 0..repeat {
                     for query_index in queries.query_index_range() {
-                        query_instances.push(QueryInstance {
-                            repetition: 0,
+                        query_references.push(QueryReference {
                             query_index: query_index as u32,
                         });
                     }
@@ -512,31 +547,19 @@ async fn main() -> Result<()> {
 
                 let mut rng = rand::thread_rng();
                 if randomize {
-                    query_instances.shuffle(&mut rng);
+                    query_references.shuffle(&mut rng);
                 }
 
-                // line0 -> seen, for repetition state during fixup
-                // after randomization
-                let mut query_counters: Vec<u32> = vec![0].repeat(queries.borrow_queries().len());
-
-                for QueryInstance {
-                    query_index,
-                    repetition,
-                } in &mut query_instances
-                {
-                    let i = *query_index as usize;
-                    *repetition = query_counters[i];
-                    query_counters[i] += 1;
-                }
-
-                query_instances
+                query_references
             };
 
             if dry_run {
-                for query_instance in query_instances {
+                for query_reference_with_repetition in
+                    query_references_with_repetitions(queries, &query_references)
+                {
                     println!(
-                        "{query_instance:?}: {}",
-                        query_instance.query(&queries).string
+                        "{query_reference_with_repetition:?}: {}",
+                        query_reference_with_repetition.query(&queries).string
                     );
                 }
                 return Ok(());
@@ -592,8 +615,11 @@ async fn main() -> Result<()> {
                     Ok(())
                 };
 
-            let mut query_instances = query_instances.iter();
-            while let Some(query_instance) = query_instances.next() {
+            let mut query_references_with_repetitions =
+                query_references_with_repetitions(queries, &query_references);
+            while let Some(query_reference_with_repetition) =
+                query_references_with_repetitions.next()
+            {
                 if verbose {
                     println!("while: {running_tasks} of {concurrency}");
                 }
@@ -601,10 +627,10 @@ async fn main() -> Result<()> {
                     await_one_task(&mut tasks, &mut running_tasks).await?;
                 }
                 let task = tokio::spawn({
-                    clone!(query_instance, endpoint_url, client_pool, output_mode,);
+                    clone!(endpoint_url, client_pool, output_mode,);
                     async move {
                         let rq = RunQuery {
-                            query_instance,
+                            query_reference_with_repetition,
                             endpoint_url,
                         };
                         let client = client_pool.get_item();
