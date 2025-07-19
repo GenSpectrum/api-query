@@ -89,6 +89,12 @@ enum Command {
         #[clap(long)]
         dry_run: bool,
 
+        /// Do not run the queries, just sleep for 10 seconds after
+        /// producing the repeated query set, to allow to check the
+        /// memory use.
+        #[clap(long)]
+        bench_memory: bool,
+
         /// Whether to randomize the order of the requests (default: no)
         #[clap(short, long)]
         randomize: bool,
@@ -401,6 +407,7 @@ async fn main() -> Result<()> {
             verbose,
             repeat,
             dry_run,
+            bench_memory,
         } => {
             let concurrency: usize = concurrency.unwrap_or(1).max(1).into();
             let output_mode = OutputMode::from_options(outdir, drop_output)?;
@@ -453,6 +460,11 @@ async fn main() -> Result<()> {
                 for query in queries {
                     println!("{query:?}");
                 }
+                return Ok(());
+            }
+
+            if bench_memory {
+                thread::sleep(Duration::from_secs(10));
                 return Ok(());
             }
 
