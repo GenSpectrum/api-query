@@ -120,7 +120,7 @@ enum Command {
 #[derive(Clone)]
 enum OutputMode {
     Print,
-    Outdir(PathBuf),
+    Outdir(Arc<PathBuf>),
     Drop,
 }
 
@@ -131,7 +131,7 @@ impl OutputMode {
         } else if let Some(outdir) = outdir {
             create_dir_all(&outdir)
                 .with_context(|| anyhow!("can't create dir or its parents: {outdir:?}"))?;
-            Ok(Self::Outdir(outdir))
+            Ok(Self::Outdir(outdir.into()))
         } else {
             Ok(Self::Print)
         }
@@ -161,7 +161,7 @@ impl OutputMode {
         match self {
             OutputMode::Print => Ok((Box::pin(stdout()), None)),
             OutputMode::Outdir(path_buf) => {
-                let path = path_buf.append(file_name);
+                let path = (&**path_buf).append(file_name);
                 Ok((
                     Box::pin(
                         File::options()
