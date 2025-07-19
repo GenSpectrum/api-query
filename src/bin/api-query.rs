@@ -3,7 +3,7 @@ use std::{
     convert::TryFrom,
     fs::{create_dir_all, remove_file, rename},
     io::Read,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Range},
     path::PathBuf,
     pin::Pin,
     sync::Arc,
@@ -180,9 +180,9 @@ impl OutputMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Query {
+struct Query<'s> {
     /// e.g. line from the queries file, or all of stdin
-    string: &'static str,
+    string: &'s str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -200,58 +200,57 @@ fn t_sizes() {
     assert_eq!(size_of::<[QueryInstance; 2]>(), 16);
 }
 
-static mut QUERIES_STRING: String = String::new();
-static mut QUERIES: Vec<Query> = Vec::new();
-static mut QUERIES_INITIALIZED: bool = false;
-
-// Ugly unsafe, but I didn't want to fight with OnceCell and have
-// Mutex overhead?
-fn set_queries_from_string(s: String) -> Result<&'static [Query]> {
-    unsafe { assert!(!QUERIES_INITIALIZED) };
-    unsafe { QUERIES_STRING = s };
-    let s = unsafe {
-        // We don't mutate any more after
-        #[allow(static_mut_refs)]
-        &QUERIES_STRING
-    };
-    let queries: Vec<Query> = s.split('\n').map(|string| Query { string }).collect();
-    (|| -> Option<_> {
-        let maxline: usize = queries.len().checked_add(1)?;
-        let _maxline: u32 = u32::try_from(maxline).ok()?;
-        Some(())
-    })()
-    .ok_or_else(|| anyhow!(">= u32 lines in file"))?;
-    unsafe { QUERIES_INITIALIZED = true };
-    Ok(unsafe {
-        QUERIES = queries;
-        // We don't mutate any more after
-        #[allow(static_mut_refs)]
-        &QUERIES
-    })
+#[ouroboros::self_referencing]
+struct Queries {
+    queries_string: String,
+    #[borrows(queries_string)]
+    #[covariant]
+    queries: Vec<Query<'this>>,
 }
 
-// Only a single query string
-fn set_query_from_string(s: String) {
-    unsafe { assert!(!QUERIES_INITIALIZED) };
-    unsafe { QUERIES_STRING = s };
-    let string = unsafe {
-        // We don't mutate any more after
-        #[allow(static_mut_refs)]
-        &QUERIES_STRING
-    };
-    let queries: Vec<Query> = vec![Query { string }];
-    unsafe { QUERIES_INITIALIZED = true };
-    unsafe { QUERIES = queries };
-}
+impl Queries {
+    fn _new(queries_string: String, split: bool) -> Result<Self> {
+        Self::try_new(queries_string, |queries_string| -> Result<_> {
+            let queries: Vec<Query> = if split {
+                queries_string
+                    .split('\n')
+                    .map(|string| Query { string })
+                    .collect()
+            } else {
+                vec![Query {
+                    string: queries_string,
+                }]
+            };
+            (|| -> Option<_> {
+                let maxline: usize = queries.len().checked_add(1)?;
+                let _maxline: u32 = u32::try_from(maxline).ok()?;
+                Some(())
+            })()
+            .ok_or_else(|| anyhow!(">= u32 lines in file"))?;
+            Ok(queries)
+        })
+    }
 
-fn get_query(i: u32) -> Query {
-    unsafe { assert!(QUERIES_INITIALIZED) };
-    unsafe { QUERIES[usize::try_from(i).expect("correct index generation")].clone() }
+    pub fn from_lines_string(queries_string: String) -> Result<Self> {
+        Self::_new(queries_string, true)
+    }
+
+    pub fn from_single_query(queries_string: String) -> Result<Self> {
+        Self::_new(queries_string, false)
+    }
+
+    fn get_query(&self, i: u32) -> Query {
+        self.borrow_queries()[usize::try_from(i).expect("correct index generation")].clone()
+    }
+
+    fn query_index_range(&self) -> Range<usize> {
+        0..self.borrow_queries().len()
+    }
 }
 
 impl QueryInstance {
-    pub fn query(&self) -> Query {
-        get_query(self.query_index)
+    pub fn query<'q>(&self, queries: &'q Queries) -> Query<'q> {
+        queries.get_query(self.query_index)
     }
 
     /// The file name is the line number (1-based) of the queries
@@ -282,15 +281,19 @@ impl RunQuery {
         client: PoolGuard<Client, F>,
         output_mode: OutputMode,
         show_repetition: bool,
+        queries: &Queries,
     ) -> Result<(StatusCode, usize)> {
         let mut res: Response = client
             .post(&*self.endpoint_url)
             .header("Connection", "keep-alive") // should be default anyway, but silo doesn't do it
-            .body(self.query_instance.query().string.to_owned())
+            .body(self.query_instance.query(queries).string.to_owned())
             .send()
             .await
             .with_context(|| {
-                anyhow!("posting the query {:?}", self.query_instance.query().string)
+                anyhow!(
+                    "posting the query {:?}",
+                    self.query_instance.query(queries).string
+                )
             })?;
         let status = res.status();
         let mut outsize = 0;
@@ -298,7 +301,7 @@ impl RunQuery {
             while let Some(bytes) = res.chunk().await.with_context(|| {
                 anyhow!(
                     "reading the result from query {:?}",
-                    self.query_instance.query().string
+                    self.query_instance.query(queries).string
                 )
             })? {
                 outsize += bytes.len();
@@ -311,7 +314,7 @@ impl RunQuery {
             while let Some(bytes) = res.chunk().await.with_context(|| {
                 anyhow!(
                     "reading the result from query {:?}",
-                    self.query_instance.query().string
+                    self.query_instance.query(queries).string
                 )
             })? {
                 out.write_all(&bytes)
@@ -439,7 +442,7 @@ async fn main() -> Result<()> {
             std::io::stdin()
                 .read_to_string(&mut query_string)
                 .with_context(|| anyhow!("reading from stdin"))?;
-            set_query_from_string(query_string);
+            let queries = Queries::from_single_query(query_string)?;
             let rq = RunQuery {
                 query_instance: QueryInstance {
                     query_index: 0,
@@ -448,7 +451,8 @@ async fn main() -> Result<()> {
                 endpoint_url,
             };
             let client = client_pool.get_item();
-            let (status, _response_len) = rq.run(client, OutputMode::Print, false).await?;
+            let (status, _response_len) =
+                rq.run(client, OutputMode::Print, false, &queries).await?;
             check_status(status)?;
         }
 
@@ -468,16 +472,17 @@ async fn main() -> Result<()> {
 
             let show_repetition = repeat != 1;
 
-            let queries_from_file = set_queries_from_string(
+            let _queries = Box::leak(Box::new(Queries::from_lines_string(
                 std::fs::read_to_string(&*queries_path)
                     .with_context(|| anyhow!("reading {queries_path:?}"))?,
-            )?;
+            )?));
+            let queries = &*_queries;
 
-            let queries = {
-                let mut queries: Vec<QueryInstance> = Vec::new();
+            let query_instances = {
+                let mut query_instances: Vec<QueryInstance> = Vec::new();
                 for _ in 0..repeat {
-                    for (query_index, _query) in queries_from_file.iter().enumerate() {
-                        queries.push(QueryInstance {
+                    for query_index in queries.query_index_range() {
+                        query_instances.push(QueryInstance {
                             repetition: 0,
                             query_index: query_index as u32,
                         });
@@ -486,29 +491,32 @@ async fn main() -> Result<()> {
 
                 let mut rng = rand::thread_rng();
                 if randomize {
-                    queries.shuffle(&mut rng);
+                    query_instances.shuffle(&mut rng);
                 }
 
                 // line0 -> seen, for repetition state during fixup
                 // after randomization
-                let mut query_counters: Vec<u32> = vec![0].repeat(queries_from_file.len());
+                let mut query_counters: Vec<u32> = vec![0].repeat(queries.borrow_queries().len());
 
                 for QueryInstance {
                     query_index,
                     repetition,
-                } in &mut queries
+                } in &mut query_instances
                 {
                     let i = *query_index as usize;
                     *repetition = query_counters[i];
                     query_counters[i] += 1;
                 }
 
-                queries
+                query_instances
             };
 
             if dry_run {
-                for query in queries {
-                    println!("{query:?}: {}", query.query().string);
+                for query_instance in query_instances {
+                    println!(
+                        "{query_instance:?}: {}",
+                        query_instance.query(&queries).string
+                    );
                 }
                 return Ok(());
             }
@@ -563,8 +571,8 @@ async fn main() -> Result<()> {
                     Ok(())
                 };
 
-            let mut queries = queries.iter();
-            while let Some(query_instance) = queries.next() {
+            let mut query_instances = query_instances.iter();
+            while let Some(query_instance) = query_instances.next() {
                 if verbose {
                     println!("while: {running_tasks} of {concurrency}");
                 }
@@ -579,7 +587,9 @@ async fn main() -> Result<()> {
                             endpoint_url,
                         };
                         let client = client_pool.get_item();
-                        let status = rq.run(client, output_mode, show_repetition).await?;
+                        let status = rq
+                            .run(client, output_mode, show_repetition, queries)
+                            .await?;
                         Ok(TaskResult(status))
                     }
                 });
