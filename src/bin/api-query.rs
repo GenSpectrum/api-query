@@ -494,11 +494,10 @@ async fn main() -> Result<()> {
 
             let show_repetition = repeat != 1;
 
-            let _queries = Box::leak(Box::new(Queries::from_lines_string(
+            let queries: &_ = Box::leak(Box::new(Queries::from_lines_string(
                 std::fs::read_to_string(&*queries_path)
                     .with_context(|| anyhow!("reading {queries_path:?}"))?,
             )?));
-            let queries = &*_queries;
 
             let query_instances = {
                 let mut query_instances: Vec<QueryInstance> = Vec::new();
