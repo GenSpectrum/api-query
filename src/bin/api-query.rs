@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{btree_map::Entry, BTreeMap},
     convert::TryFrom,
     fs::{create_dir_all, remove_file, rename},
     io::Read,
@@ -576,7 +576,7 @@ async fn main() -> Result<()> {
             // Hard errors
             let mut errors = Vec::new();
             // Soft errors
-            let mut status_tally = HashMap::<StatusCode, usize>::new();
+            let mut status_tally = BTreeMap::<StatusCode, usize>::new();
 
             let mut tasks =
                 FuturesUnordered::<JoinHandle<Result<TaskResult, anyhow::Error>>>::new();
