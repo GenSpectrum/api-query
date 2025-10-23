@@ -675,7 +675,11 @@ async fn main() -> Result<()> {
             while running_tasks > 0 {
                 await_one_task(&mut tasks, &mut running_tasks).await?;
             }
-            println!(" ====>  {status_tally:?} ~successes, and errors: {errors:?}");
+            if collect_errors {
+                println!(" ====>  {status_tally:?} ~successes, and errors: {errors:?}");
+            } else {
+                println!(" ====>  {status_tally:?} ~successes, and {num_errors} errors");
+            }
         }
     }
 
