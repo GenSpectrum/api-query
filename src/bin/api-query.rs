@@ -114,6 +114,14 @@ enum Command {
 
         /// Path to a file with one query per line
         queries_path: PathBuf,
+
+        /// By default, hard errors (failing connections) are
+        /// collected until reaching 6, at which point the program
+        /// stops with an error showing all of them. This option
+        /// additionally makes it print each error immediately as they
+        /// happen.
+        #[clap(short, long)]
+        show_errors_immediately: bool,
     },
 }
 
@@ -478,17 +486,17 @@ fn default_url(port: Option<u16>) -> Result<String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let opts: Opts = Opts::parse();
+    let Opts { url, port, command } = Opts::parse();
 
-    let endpoint_url: Arc<str> = if let Some(url) = &opts.url {
+    let endpoint_url: Arc<str> = if let Some(url) = &url {
         url.as_str().into()
     } else {
-        default_url(opts.port)?.into()
+        default_url(port)?.into()
     };
 
     let client_pool: Arc<Pool<Client, _>> = Pool::new(|| Client::new());
 
-    match opts.command {
+    match command {
         Command::Defaults => {
             println!("Default url: {}", default_url(None)?);
         }
@@ -521,6 +529,7 @@ async fn main() -> Result<()> {
             outdir,
             drop_output,
             verbose,
+            show_errors_immediately,
             repeat,
             dry_run,
             bench_memory,
@@ -602,7 +611,12 @@ async fn main() -> Result<()> {
                                 }
                             }
                         }
-                        Ok(Err(e)) => errors.push(e),
+                        Ok(Err(e)) => {
+                            if show_errors_immediately {
+                                eprintln!("error: {e:?}");
+                            }
+                            errors.push(e);
+                        }
                         Err(join_error) => bail!("Task panicked: {join_error}"),
                     }
 
