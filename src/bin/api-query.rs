@@ -288,7 +288,7 @@ impl Queries {
         Self::_new(queries_string, false)
     }
 
-    fn get_query(&self, i: u32) -> Query {
+    fn get_query(&self, i: u32) -> Query<'_> {
         self.borrow_queries()[usize::try_from(i).expect("correct index generation")].clone()
     }
 
