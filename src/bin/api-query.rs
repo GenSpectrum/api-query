@@ -596,42 +596,47 @@ async fn main() -> Result<()> {
             let mut tasks =
                 FuturesUnordered::<JoinHandle<Result<TaskResult, anyhow::Error>>>::new();
 
-            let mut await_one_task =
-                async |tasks: &mut FuturesUnordered<_>, running_tasks: &mut usize| -> Result<()> {
-                    if verbose {
-                        println!("await_one_task: {running_tasks}");
-                    }
-                    let result = tasks
-                        .next()
-                        .await
-                        .ok_or_else(|| anyhow!("no task left, BUG"))?;
-                    (*running_tasks) -= 1;
-                    match result {
-                        Ok(Ok(TaskResult((status, _response_len)))) => {
-                            match status_tally.entry(status) {
-                                Entry::Occupied(mut occupied_entry) => {
-                                    (*occupied_entry.get_mut()) += 1;
-                                }
-                                Entry::Vacant(vacant_entry) => {
-                                    vacant_entry.insert(1);
-                                }
+            let mut await_one_task = async |tasks: &mut FuturesUnordered<_>,
+                                            running_tasks: &mut usize|
+                   -> Result<()> {
+                if verbose {
+                    println!("await_one_task: {running_tasks}");
+                }
+                let result = tasks
+                    .next()
+                    .await
+                    .ok_or_else(|| anyhow!("no task left, BUG"))?;
+                (*running_tasks) -= 1;
+                match result {
+                    Ok(Ok(TaskResult((status, _response_len)))) => {
+                        match status_tally.entry(status) {
+                            Entry::Occupied(mut occupied_entry) => {
+                                (*occupied_entry.get_mut()) += 1;
+                            }
+                            Entry::Vacant(vacant_entry) => {
+                                vacant_entry.insert(1);
                             }
                         }
-                        Ok(Err(e)) => {
-                            let timestamp = SystemTime::now();
-                            if show_errors_immediately {
-                                eprintln!("error: {e:?}");
-                            }
-                            errors.push((timestamp, e));
-                        }
-                        Err(join_error) => bail!("Task panicked: {join_error}"),
                     }
+                    Ok(Err(e)) => {
+                        let timestamp = SystemTime::now();
+                        if show_errors_immediately {
+                            eprintln!("error: {e:?}");
+                        }
+                        errors.push((timestamp, e));
+                    }
+                    Err(join_error) => bail!("Task panicked: {join_error}"),
+                }
 
-                    if errors.len() > max_errors {
-                        bail!("too many errors (besides {status_tally:?} ~successes): {errors:?}",)
+                if errors.len() > max_errors {
+                    if show_errors_immediately {
+                        bail!("too many errors (besides {status_tally:?} ~successes)")
+                    } else {
+                        bail!("too many errors (besides {status_tally:?} ~successes): {errors:?}")
                     }
-                    Ok(())
-                };
+                }
+                Ok(())
+            };
 
             let mut query_references_with_repetitions =
                 query_references_with_repetitions(queries, &query_references);
