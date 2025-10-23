@@ -8,7 +8,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     thread,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -618,10 +618,11 @@ async fn main() -> Result<()> {
                             }
                         }
                         Ok(Err(e)) => {
+                            let timestamp = SystemTime::now();
                             if show_errors_immediately {
                                 eprintln!("error: {e:?}");
                             }
-                            errors.push(e);
+                            errors.push((timestamp, e));
                         }
                         Err(join_error) => bail!("Task panicked: {join_error}"),
                     }
