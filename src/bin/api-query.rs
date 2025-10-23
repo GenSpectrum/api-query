@@ -115,13 +115,15 @@ enum Command {
         /// Path to a file with one query per line
         queries_path: PathBuf,
 
-        /// By default, hard errors (failing connections) are
-        /// collected until reaching 6, at which point the program
-        /// stops with an error showing all of them. This option
-        /// additionally makes it print each error immediately as they
-        /// happen.
-        #[clap(short, long)]
-        show_errors_immediately: bool,
+        /// By default, hard errors (failing connections) are shown
+        /// immediately, even though the program only stops when
+        /// `--max-errors` have happened. This option makes it remain
+        /// silent about those errors, but instead shows them in the
+        /// `Error` message that is issued when stopping or upon
+        /// successful termination, together with a SystemTime
+        /// (unixtime) timestamp.
+        #[clap(long)]
+        collect_errors: bool,
 
         /// The maximum number of hard errors (connection errors) that are
         /// accepted before the program terminates with an error.
@@ -534,7 +536,7 @@ async fn main() -> Result<()> {
             outdir,
             drop_output,
             verbose,
-            show_errors_immediately,
+            collect_errors,
             repeat,
             dry_run,
             bench_memory,
@@ -590,6 +592,7 @@ async fn main() -> Result<()> {
             let mut running_tasks = 0;
             // Hard errors
             let mut errors = Vec::new();
+            let mut num_errors = 0;
             // Soft errors
             let mut status_tally = BTreeMap::<StatusCode, usize>::new();
 
@@ -620,19 +623,21 @@ async fn main() -> Result<()> {
                     }
                     Ok(Err(e)) => {
                         let timestamp = SystemTime::now();
-                        if show_errors_immediately {
+                        num_errors += 1;
+                        if collect_errors {
+                            errors.push((timestamp, e));
+                        } else {
                             eprintln!("error: {e:?}");
                         }
-                        errors.push((timestamp, e));
                     }
                     Err(join_error) => bail!("Task panicked: {join_error}"),
                 }
 
-                if errors.len() > max_errors {
-                    if show_errors_immediately {
-                        bail!("too many errors (besides {status_tally:?} ~successes)")
-                    } else {
+                if num_errors > max_errors {
+                    if collect_errors {
                         bail!("too many errors (besides {status_tally:?} ~successes): {errors:?}")
+                    } else {
+                        bail!("too many errors (besides {status_tally:?} ~successes)")
                     }
                 }
                 Ok(())
