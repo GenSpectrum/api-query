@@ -614,7 +614,7 @@ async fn main() -> Result<()> {
                         if collect_errors {
                             errors.push((timestamp, e));
                         } else {
-                            eprintln!("error: {e:?}");
+                            eprintln!("error at {timestamp:?}: {e:?}");
                         }
                     }
                     Err(join_error) => bail!("Task panicked: {join_error}"),
