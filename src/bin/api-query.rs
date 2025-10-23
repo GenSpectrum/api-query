@@ -122,6 +122,11 @@ enum Command {
         /// happen.
         #[clap(short, long)]
         show_errors_immediately: bool,
+
+        /// The maximum number of hard errors (connection errors) that are
+        /// accepted before the program terminates with an error.
+        #[clap(short, long, default_value = "5")]
+        max_errors: usize,
     },
 }
 
@@ -533,6 +538,7 @@ async fn main() -> Result<()> {
             repeat,
             dry_run,
             bench_memory,
+            max_errors,
         } => {
             let concurrency: usize = concurrency.unwrap_or(1).max(1).into();
             let output_mode = OutputMode::from_options(outdir, drop_output)?;
@@ -620,11 +626,8 @@ async fn main() -> Result<()> {
                         Err(join_error) => bail!("Task panicked: {join_error}"),
                     }
 
-                    if errors.len() > 5 {
-                        bail!(
-                            "too many errors (besides {:?} ~successes): {errors:?}",
-                            status_tally
-                        )
+                    if errors.len() > max_errors {
+                        bail!("too many errors (besides {status_tally:?} ~successes): {errors:?}",)
                     }
                     Ok(())
                 };
