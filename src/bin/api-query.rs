@@ -593,7 +593,7 @@ async fn main() -> Result<()> {
                     .next()
                     .await
                     .ok_or_else(|| anyhow!("no task left, BUG"))?;
-                (*running_tasks) -= 1;
+                *running_tasks -= 1;
                 match result {
                     Ok(Ok(TaskResult((status, _response_len)))) => {
                         match status_tally.entry(status) {
