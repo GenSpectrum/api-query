@@ -112,9 +112,6 @@ enum Command {
         #[clap(short = 'd', long = "drop")]
         drop_output: bool,
 
-        /// Path to a file with one query per line
-        queries_path: PathBuf,
-
         /// By default, hard errors (failing connections) are shown
         /// immediately, even though the program only stops when
         /// `--max-errors` have happened. This option makes it remain
@@ -129,6 +126,9 @@ enum Command {
         /// accepted before the program terminates with an error.
         #[clap(short, long, default_value = "5")]
         max_errors: usize,
+
+        /// Path to a file with one query per line
+        queries_path: PathBuf,
     },
 }
 
@@ -519,7 +519,6 @@ async fn main() -> Result<()> {
         Command::Iter {
             concurrency,
             randomize,
-            queries_path,
             outdir,
             drop_output,
             verbose,
@@ -528,6 +527,7 @@ async fn main() -> Result<()> {
             dry_run,
             bench_memory,
             max_errors,
+            queries_path,
         } => {
             let concurrency: usize = concurrency.unwrap_or(1).max(1).into();
             let output_mode = OutputMode::from_options(outdir, drop_output)?;
