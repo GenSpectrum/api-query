@@ -583,9 +583,6 @@ async fn main() -> Result<()> {
             // Soft errors
             let mut status_tally = BTreeMap::<StatusCode, usize>::new();
 
-            let mut tasks =
-                FuturesUnordered::<JoinHandle<Result<TaskResult, anyhow::Error>>>::new();
-
             let mut await_one_task = async |tasks: &mut FuturesUnordered<_>,
                                             running_tasks: &mut usize|
                    -> Result<()> {
@@ -630,6 +627,8 @@ async fn main() -> Result<()> {
                 Ok(())
             };
 
+            let mut tasks =
+                FuturesUnordered::<JoinHandle<Result<TaskResult, anyhow::Error>>>::new();
             let mut query_references_with_repetitions =
                 query_references_with_repetitions(queries, &query_references);
             while let Some(query_reference_with_repetition) =
