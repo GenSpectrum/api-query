@@ -14,3 +14,6 @@ RUSTSEC-2024-0421
 # tokio 1.36.0 affected by RUSTSEC-2025-0023 (unsound)
 RUSTSEC-2025-0023
 
+# adler 1.0.2 affected by RUSTSEC-2025-0056 (unmaintained)
+RUSTSEC-2025-0056
+
