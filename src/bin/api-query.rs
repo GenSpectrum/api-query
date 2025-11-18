@@ -230,7 +230,7 @@ struct QueryReferenceWithRepetition {
     repetition: u32,
 }
 
-/// `queries` just to get the max query id.
+/// Needs `queries` just to get the max query id.
 fn query_references_with_repetitions<'r>(
     queries: &Queries,
     query_references: &'r [QueryReference],
