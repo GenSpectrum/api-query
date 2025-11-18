@@ -16,9 +16,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use api_query::{
     clone,
     get_terminal_width::get_terminal_width,
-    log_file::UnixTimeWrap,
     my_crc::{Crc, MyCrc},
     path_util::{add_extension, AppendToPath},
+    time::{Rfc3339TimeWrap, UnixTimeWrap},
 };
 use clap::Parser;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -694,7 +694,7 @@ async fn main() -> Result<()> {
                         if collect_errors {
                             errors.push((timestamp, e));
                         } else {
-                            eprintln!("error at {timestamp:?}: {e:?}");
+                            eprintln!("error at {}: {e:?}", Rfc3339TimeWrap(timestamp));
                         }
                     }
                     Err(join_error) => bail!("Task panicked: {join_error}"),
