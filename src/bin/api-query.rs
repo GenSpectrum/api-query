@@ -670,7 +670,7 @@ async fn main() -> Result<()> {
                             let crc = crc.expect("enabling log file automatically enables crc");
                             writeln!(
                                 tmp,
-                                "{query_reference},{},{},{},{status},{crc}",
+                                "{query_reference},{},{},{},{status},\"crc:{crc}\"",
                                 UnixTimeWrap(start),
                                 UnixTimeWrap(end),
                                 end.duration_since(start)
