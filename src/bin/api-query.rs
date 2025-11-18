@@ -63,6 +63,13 @@ struct Opts {
     #[clap(long)]
     port: Option<u16>,
 
+    /// Run a single request and wait for completion before starting
+    /// for real, dropping the result or errors; meant to get a DNS
+    /// response cached and possibly other things that slow down a
+    /// first request.
+    #[clap(long)]
+    warm_up: bool,
+
     /// The subcommand to run. Use `--help` after the sub-command to
     /// get a list of the allowed options there.
     #[clap(subcommand)]
@@ -522,7 +529,12 @@ fn default_url(port: Option<u16>) -> Result<String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let Opts { url, port, command } = Opts::parse();
+    let Opts {
+        url,
+        port,
+        command,
+        warm_up,
+    } = Opts::parse();
 
     let endpoint_url: Arc<str> = if let Some(url) = &url {
         url.as_str().into()
@@ -531,6 +543,20 @@ async fn main() -> Result<()> {
     };
 
     let client_pool: Arc<Pool<Client, _>> = Pool::new(|| Client::new());
+
+    if warm_up {
+        let client = client_pool.get_item();
+        let rq = RunQuery {
+            query_reference_with_repetition: QueryReferenceWithRepetition {
+                query_reference: QueryReference { query_index: 0 },
+                repetition: 0,
+            },
+            endpoint_url: endpoint_url.clone(),
+            calculate_crc: false,
+        };
+        let queries = Queries::from_single_query("".into())?;
+        let _ = rq.run(client, OutputMode::Drop, false, &queries).await;
+    }
 
     match command {
         Command::Defaults => {
