@@ -213,6 +213,7 @@ struct Query<'s> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct QueryReference {
+    /// entry (line) in queries file, 0-based
     query_index: u32,
 }
 
