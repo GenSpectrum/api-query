@@ -670,9 +670,16 @@ async fn main() -> Result<()> {
                             let crc = crc.expect("enabling log file automatically enables crc");
                             writeln!(
                                 tmp,
-                                "{query_reference},{},{},{status},{crc}",
+                                "{query_reference},{},{},{},{status},{crc}",
                                 UnixTimeWrap(start),
                                 UnixTimeWrap(end),
+                                end.duration_since(start)
+                                    .with_context(|| anyhow!(
+                                        "time difference from {} to {}",
+                                        UnixTimeWrap(start),
+                                        UnixTimeWrap(end)
+                                    ))?
+                                    .as_secs_f64(),
                             )?;
 
                             log_file
@@ -710,7 +717,7 @@ async fn main() -> Result<()> {
                         .with_context(|| anyhow!("opening {path:?} for writing"))?,
                 );
                 log_file
-                    .write_all("line in query file,start,end,status,crc\n".as_bytes())
+                    .write_all("line in query file,start,end,d,status,crc\n".as_bytes())
                     .await
                     .context("writing to CSV log file")?;
                 Some(log_file)
