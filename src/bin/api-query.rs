@@ -1,6 +1,7 @@
 use std::{
     collections::{btree_map::Entry, BTreeMap},
     convert::TryFrom,
+    fmt::{Display, Write},
     fs::{create_dir_all, remove_file, rename},
     io::Read,
     ops::{Deref, DerefMut, Range},
@@ -15,6 +16,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use api_query::{
     clone,
     get_terminal_width::get_terminal_width,
+    log_file::UnixTimeWrap,
+    my_crc::{Crc, MyCrc},
     path_util::{add_extension, AppendToPath},
 };
 use clap::Parser;
@@ -24,9 +27,11 @@ use reqwest::{Client, Response, StatusCode};
 use tokio::{
     self,
     fs::File,
-    io::{stdout, AsyncWrite, AsyncWriteExt},
+    io::{stdout, AsyncWrite, AsyncWriteExt, BufWriter},
     task::JoinHandle,
 };
+
+type CrcDigest = crc_fast::Digest;
 
 fn getenv(name: &str) -> Result<Option<String>> {
     match std::env::var(name) {
@@ -127,6 +132,12 @@ enum Command {
         #[clap(short, long, default_value = "5")]
         max_errors: usize,
 
+        /// Path to where an output file in CSV format should be
+        /// written, with a line for each executed query, with start
+        /// and end times, return status, and CRC.
+        #[clap(long)]
+        log_csv: Option<PathBuf>,
+
         /// Path to a file with one query per line
         queries_path: PathBuf,
     },
@@ -203,6 +214,13 @@ struct Query<'s> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct QueryReference {
     query_index: u32,
+}
+
+/// Show line number, 1-based
+impl Display for QueryReference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.query_index + 1)
+    }
 }
 
 #[derive(Debug)]
@@ -322,6 +340,15 @@ impl QueryReferenceWithRepetition {
 struct RunQuery {
     endpoint_url: Arc<str>,
     query_reference_with_repetition: QueryReferenceWithRepetition,
+    calculate_crc: bool,
+}
+
+struct RunQueryResult {
+    query_reference: QueryReference,
+    status: StatusCode,
+    #[allow(unused)] // XX why is this now never read, there was no warning before?
+    outsize: usize,
+    crc: Option<Crc>,
 }
 
 impl RunQuery {
@@ -333,7 +360,13 @@ impl RunQuery {
         output_mode: OutputMode,
         show_repetition: bool,
         queries: &Queries,
-    ) -> Result<(StatusCode, usize)> {
+    ) -> Result<RunQueryResult> {
+        let mut digest: Option<CrcDigest> = if self.calculate_crc {
+            Some(MyCrc::new())
+        } else {
+            None
+        };
+
         let mut res: Response = client
             .post(&*self.endpoint_url)
             .header("Connection", "keep-alive") // should be default anyway, but silo doesn't do it
@@ -361,6 +394,9 @@ impl RunQuery {
                 )
             })? {
                 outsize += bytes.len();
+                if let Some(digest) = &mut digest {
+                    digest.add(&bytes);
+                }
             }
         } else {
             let (mut out, outpath) = output_mode
@@ -400,7 +436,12 @@ impl RunQuery {
                 }
             }
         }
-        Ok((status, outsize))
+        Ok(RunQueryResult {
+            query_reference: self.query_reference_with_repetition.query_reference,
+            status,
+            outsize,
+            crc: digest.map(MyCrc::finalize),
+        })
     }
 }
 
@@ -509,11 +550,11 @@ async fn main() -> Result<()> {
                     repetition: 0,
                 },
                 endpoint_url,
+                calculate_crc: false, // add an option?
             };
             let client = client_pool.get_item();
-            let (status, _response_len) =
-                rq.run(client, OutputMode::Print, false, &queries).await?;
-            check_status(status)?;
+            let result = rq.run(client, OutputMode::Print, false, &queries).await?;
+            check_status(result.status)?;
         }
 
         Command::Iter {
@@ -527,6 +568,7 @@ async fn main() -> Result<()> {
             dry_run,
             bench_memory,
             max_errors,
+            log_csv,
             queries_path,
         } => {
             let concurrency: usize = concurrency.unwrap_or(1).max(1).into();
@@ -574,7 +616,11 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
 
-            struct TaskResult((StatusCode, usize));
+            struct TaskResult {
+                run_query_result: RunQueryResult,
+                start: SystemTime,
+                end: SystemTime,
+            }
 
             let mut running_tasks = 0;
             // Hard errors
@@ -584,7 +630,9 @@ async fn main() -> Result<()> {
             let mut status_tally = BTreeMap::<StatusCode, usize>::new();
 
             let mut await_one_task = async |tasks: &mut FuturesUnordered<_>,
-                                            running_tasks: &mut usize|
+                                            running_tasks: &mut usize,
+                                            log_file: &mut Option<BufWriter<File>>,
+                                            tmp: &mut String|
                    -> Result<()> {
                 if verbose {
                     println!("await_one_task: {running_tasks}");
@@ -595,7 +643,17 @@ async fn main() -> Result<()> {
                     .ok_or_else(|| anyhow!("no task left, BUG"))?;
                 *running_tasks -= 1;
                 match result {
-                    Ok(Ok(TaskResult((status, _response_len)))) => {
+                    Ok(Ok(TaskResult {
+                        run_query_result:
+                            RunQueryResult {
+                                query_reference,
+                                status,
+                                outsize: _,
+                                crc,
+                            },
+                        start,
+                        end,
+                    })) => {
                         match status_tally.entry(status) {
                             Entry::Occupied(mut occupied_entry) => {
                                 (*occupied_entry.get_mut()) += 1;
@@ -603,6 +661,24 @@ async fn main() -> Result<()> {
                             Entry::Vacant(vacant_entry) => {
                                 vacant_entry.insert(1);
                             }
+                        }
+
+                        // XX make an abstraction in log_file.rs that
+                        // can also read back.
+                        if let Some(log_file) = log_file {
+                            tmp.clear();
+                            let crc = crc.expect("enabling log file automatically enables crc");
+                            writeln!(
+                                tmp,
+                                "{query_reference},{},{},{status},{crc}",
+                                UnixTimeWrap(start),
+                                UnixTimeWrap(end),
+                            )?;
+
+                            log_file
+                                .write_all(tmp.as_bytes())
+                                .await
+                                .context("writing to CSV log file")?;
                         }
                     }
                     Ok(Err(e)) => {
@@ -627,6 +703,22 @@ async fn main() -> Result<()> {
                 Ok(())
             };
 
+            let mut log_file = if let Some(path) = &log_csv {
+                let mut log_file = BufWriter::new(
+                    File::create(path)
+                        .await
+                        .with_context(|| anyhow!("opening {path:?} for writing"))?,
+                );
+                log_file
+                    .write_all("line in query file,start,end,status,crc\n".as_bytes())
+                    .await
+                    .context("writing to CSV log file")?;
+                Some(log_file)
+            } else {
+                None
+            };
+
+            let mut tmp = String::new();
             let mut tasks =
                 FuturesUnordered::<JoinHandle<Result<TaskResult, anyhow::Error>>>::new();
             let mut query_references_with_repetitions =
@@ -638,20 +730,29 @@ async fn main() -> Result<()> {
                     println!("while: {running_tasks} of {concurrency}");
                 }
                 if running_tasks >= concurrency {
-                    await_one_task(&mut tasks, &mut running_tasks).await?;
+                    await_one_task(&mut tasks, &mut running_tasks, &mut log_file, &mut tmp).await?;
                 }
                 let task = tokio::spawn({
                     clone!(endpoint_url, client_pool, output_mode,);
+                    let calculate_crc = log_csv.is_some();
                     async move {
                         let rq = RunQuery {
                             query_reference_with_repetition,
                             endpoint_url,
+                            calculate_crc,
                         };
                         let client = client_pool.get_item();
-                        let status = rq
+                        let start = SystemTime::now();
+                        let run_query_result = rq
                             .run(client, output_mode, show_repetition, queries)
                             .await?;
-                        Ok(TaskResult(status))
+                        let end = SystemTime::now();
+
+                        Ok(TaskResult {
+                            run_query_result,
+                            start,
+                            end,
+                        })
                     }
                 });
                 running_tasks += 1;
@@ -659,8 +760,13 @@ async fn main() -> Result<()> {
             }
 
             while running_tasks > 0 {
-                await_one_task(&mut tasks, &mut running_tasks).await?;
+                await_one_task(&mut tasks, &mut running_tasks, &mut log_file, &mut tmp).await?;
             }
+
+            if let Some(mut log_file) = log_file {
+                log_file.flush().await.context("flushing CSV log file")?;
+            }
+
             if collect_errors {
                 println!(" ====>  {status_tally:?} ~successes, and errors: {errors:?}");
             } else {
