@@ -692,24 +692,22 @@ async fn main() -> Result<()> {
 
                         if let Some(log_file) = log_file {
                             let crc = crc.expect("enabling log file automatically enables crc");
-                            log_file
-                                .write_row([
-                                    &query_reference,
-                                    &UnixTimeWrap(start),
-                                    &UnixTimeWrap(end),
-                                    &end.duration_since(start)
-                                        .with_context(|| {
-                                            anyhow!(
-                                                "time difference from {} to {}",
-                                                UnixTimeWrap(start),
-                                                UnixTimeWrap(end)
-                                            )
-                                        })?
-                                        .as_secs_f64(),
-                                    &status,
-                                    &crc,
-                                ])
-                                .await?;
+                            log_file.write_row([
+                                &query_reference,
+                                &UnixTimeWrap(start),
+                                &UnixTimeWrap(end),
+                                &end.duration_since(start)
+                                    .with_context(|| {
+                                        anyhow!(
+                                            "time difference from {} to {}",
+                                            UnixTimeWrap(start),
+                                            UnixTimeWrap(end)
+                                        )
+                                    })?
+                                    .as_secs_f64(),
+                                &status,
+                                &crc,
+                            ])?;
                         }
                     }
                     Ok(Err(e)) => {
@@ -735,7 +733,7 @@ async fn main() -> Result<()> {
             };
 
             let mut log_file = if let Some(path) = &log_csv {
-                Some(LogCsv::create(path).await?)
+                Some(LogCsv::create(path)?)
             } else {
                 None
             };
@@ -785,7 +783,7 @@ async fn main() -> Result<()> {
             }
 
             if let Some(mut log_file) = log_file {
-                log_file.flush().await?;
+                log_file.flush()?;
             }
 
             if collect_errors {
