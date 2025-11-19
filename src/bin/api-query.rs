@@ -1,7 +1,7 @@
 use std::{
     collections::{btree_map::Entry, BTreeMap},
     convert::TryFrom,
-    fmt::{Display, Write},
+    fmt::Display,
     fs::{create_dir_all, remove_file, rename},
     io::Read,
     ops::{Deref, DerefMut, Range},
@@ -16,6 +16,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use api_query::{
     clone,
     get_terminal_width::get_terminal_width,
+    log_csv::LogCsv,
     my_crc::{Crc, MyCrc},
     path_util::{add_extension, AppendToPath},
     time::{Rfc3339TimeWrap, UnixTimeWrap},
@@ -27,7 +28,7 @@ use reqwest::{Client, Response, StatusCode};
 use tokio::{
     self,
     fs::File,
-    io::{stdout, AsyncWrite, AsyncWriteExt, BufWriter},
+    io::{stdout, AsyncWrite, AsyncWriteExt},
     task::JoinHandle,
 };
 
@@ -658,8 +659,7 @@ async fn main() -> Result<()> {
 
             let mut await_one_task = async |tasks: &mut FuturesUnordered<_>,
                                             running_tasks: &mut usize,
-                                            log_file: &mut Option<BufWriter<File>>,
-                                            tmp: &mut String|
+                                            log_file: &mut Option<LogCsv>|
                    -> Result<()> {
                 if verbose {
                     println!("await_one_task: {running_tasks}");
@@ -690,29 +690,26 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        // XX make an abstraction in log_file.rs that
-                        // can also read back.
                         if let Some(log_file) = log_file {
-                            tmp.clear();
                             let crc = crc.expect("enabling log file automatically enables crc");
-                            writeln!(
-                                tmp,
-                                "{query_reference},{},{},{},{status},\"crc:{crc}\"",
-                                UnixTimeWrap(start),
-                                UnixTimeWrap(end),
-                                end.duration_since(start)
-                                    .with_context(|| anyhow!(
-                                        "time difference from {} to {}",
-                                        UnixTimeWrap(start),
-                                        UnixTimeWrap(end)
-                                    ))?
-                                    .as_secs_f64(),
-                            )?;
-
                             log_file
-                                .write_all(tmp.as_bytes())
-                                .await
-                                .context("writing to CSV log file")?;
+                                .write_row([
+                                    &query_reference,
+                                    &UnixTimeWrap(start),
+                                    &UnixTimeWrap(end),
+                                    &end.duration_since(start)
+                                        .with_context(|| {
+                                            anyhow!(
+                                                "time difference from {} to {}",
+                                                UnixTimeWrap(start),
+                                                UnixTimeWrap(end)
+                                            )
+                                        })?
+                                        .as_secs_f64(),
+                                    &status,
+                                    &crc,
+                                ])
+                                .await?;
                         }
                     }
                     Ok(Err(e)) => {
@@ -738,21 +735,11 @@ async fn main() -> Result<()> {
             };
 
             let mut log_file = if let Some(path) = &log_csv {
-                let mut log_file = BufWriter::new(
-                    File::create(path)
-                        .await
-                        .with_context(|| anyhow!("opening {path:?} for writing"))?,
-                );
-                log_file
-                    .write_all("line in query file,start,end,d,status,crc\n".as_bytes())
-                    .await
-                    .context("writing to CSV log file")?;
-                Some(log_file)
+                Some(LogCsv::create(path).await?)
             } else {
                 None
             };
 
-            let mut tmp = String::new();
             let mut tasks =
                 FuturesUnordered::<JoinHandle<Result<TaskResult, anyhow::Error>>>::new();
             let mut query_references_with_repetitions =
@@ -764,7 +751,7 @@ async fn main() -> Result<()> {
                     println!("while: {running_tasks} of {concurrency}");
                 }
                 if running_tasks >= concurrency {
-                    await_one_task(&mut tasks, &mut running_tasks, &mut log_file, &mut tmp).await?;
+                    await_one_task(&mut tasks, &mut running_tasks, &mut log_file).await?;
                 }
                 let task = tokio::spawn({
                     clone!(endpoint_url, client_pool, output_mode,);
@@ -794,11 +781,11 @@ async fn main() -> Result<()> {
             }
 
             while running_tasks > 0 {
-                await_one_task(&mut tasks, &mut running_tasks, &mut log_file, &mut tmp).await?;
+                await_one_task(&mut tasks, &mut running_tasks, &mut log_file).await?;
             }
 
             if let Some(mut log_file) = log_file {
-                log_file.flush().await.context("flushing CSV log file")?;
+                log_file.flush().await?;
             }
 
             if collect_errors {
