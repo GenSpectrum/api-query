@@ -21,18 +21,18 @@ pub struct LogCsvRecord(
 );
 
 /// The api-query log file in CSV format
-pub struct LogCsv {
+struct LogCsv {
     tmp: String,
     path: Arc<Path>,
     log_file: BufWriter<File>,
 }
 
 impl LogCsv {
-    pub const NUM_COLS: usize = 6;
-    pub const HEADER: [&str; Self::NUM_COLS] =
+    const NUM_COLS: usize = 6;
+    const HEADER: [&str; Self::NUM_COLS] =
         ["line in query file", "start", "end", "d", "status", "crc"];
 
-    pub fn create(path: Arc<Path>) -> Result<Self> {
+    fn create(path: Arc<Path>) -> Result<Self> {
         let mut log_file = BufWriter::new(
             File::create(&*path).with_context(|| anyhow!("opening {path:?} for writing"))?,
         );
@@ -51,7 +51,7 @@ impl LogCsv {
         })
     }
 
-    pub fn write_row(&mut self, values: LogCsvRecord) -> Result<()> {
+    fn write_row(&mut self, values: LogCsvRecord) -> Result<()> {
         let Self {
             tmp,
             path,
@@ -70,7 +70,7 @@ impl LogCsv {
         Ok(())
     }
 
-    pub fn flush(&mut self) -> Result<()> {
+    fn flush(&mut self) -> Result<()> {
         self.log_file
             .flush()
             .with_context(|| anyhow!("flushing CSV log file {:?}", self.path))?;
