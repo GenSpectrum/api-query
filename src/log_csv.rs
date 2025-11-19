@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufWriter, Write},
+    io::BufWriter,
     path::Path,
     sync::{mpsc, Arc},
     thread,
@@ -22,9 +22,8 @@ pub struct LogCsvRecord(
 
 /// The api-query log file in CSV format
 struct LogCsv {
-    tmp: String,
     path: Arc<Path>,
-    log_file: BufWriter<File>,
+    writer: csv::Writer<BufWriter<File>>,
 }
 
 impl LogCsv {
@@ -33,45 +32,42 @@ impl LogCsv {
         ["line in query file", "start", "end", "d", "status", "crc"];
 
     fn create(path: Arc<Path>) -> Result<Self> {
-        let mut log_file = BufWriter::new(
+        let log_file = BufWriter::new(
             File::create(&*path).with_context(|| anyhow!("opening {path:?} for writing"))?,
         );
-        (|| -> Result<()> {
-            for row in itertools::Itertools::intersperse(Self::HEADER.iter(), &",") {
-                log_file.write_all(row.as_bytes())?;
-            }
-            log_file.write_all(b"\n")?;
-            Ok(())
-        })()
-        .with_context(|| anyhow!("writing to {path:?}"))?;
-        Ok(Self {
-            tmp: String::new(),
-            path,
-            log_file,
-        })
+
+        let mut writer = csv::Writer::from_writer(log_file);
+        writer
+            .write_record(Self::HEADER)
+            .with_context(|| anyhow!("writing to CSV log file {path:?}"))?;
+
+        Ok(Self { path, writer })
     }
 
     fn write_row(&mut self, values: LogCsvRecord) -> Result<()> {
-        let Self {
-            tmp,
-            path,
-            log_file,
-        } = self;
+        let Self { path, writer } = self;
 
-        tmp.clear();
         let LogCsvRecord(a, b, c, d, e, f) = values;
-        use std::fmt::Write;
-        writeln!(tmp, "{a},{b},{c},{d},{e},\"crc:{f}\"",)?;
+        // lame, wanted to avoid allocations, but there we are (and I
+        // don't want to write serde serializers).
+        let record = [
+            a.to_string(),
+            b.to_string(),
+            c.to_string(),
+            d.to_string(),
+            e.to_string(),
+            f.to_string(),
+        ];
 
-        log_file
-            .write_all(tmp.as_bytes())
+        writer
+            .write_record(record)
             .with_context(|| anyhow!("writing to CSV log file {path:?}"))?;
 
         Ok(())
     }
 
     fn flush(&mut self) -> Result<()> {
-        self.log_file
+        self.writer
             .flush()
             .with_context(|| anyhow!("flushing CSV log file {:?}", self.path))?;
         Ok(())

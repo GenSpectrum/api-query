@@ -27,6 +27,6 @@ pub struct Crc(u64);
 /// For now just as a decimal number
 impl Display for Crc {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "crc:{}", self.0)
     }
 }
