@@ -1,11 +1,22 @@
 use std::{
-    fmt::Display,
     fs::File,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
 
 use anyhow::{anyhow, Context, Result};
+use reqwest::StatusCode;
+
+use crate::{my_crc::Crc, time::UnixTimeWrap, types::QueryReference};
+
+pub struct LogCsvRecord(
+    pub QueryReference,
+    pub UnixTimeWrap,
+    pub UnixTimeWrap,
+    pub f64,
+    pub StatusCode,
+    pub Crc,
+);
 
 /// The api-query log file in CSV format
 pub struct LogCsv {
@@ -33,7 +44,7 @@ impl LogCsv {
         })
     }
 
-    pub fn write_row(&mut self, values: [&dyn Display; Self::NUM_COLS]) -> Result<()> {
+    pub fn write_row(&mut self, values: LogCsvRecord) -> Result<()> {
         let Self {
             tmp,
             path,
@@ -41,7 +52,7 @@ impl LogCsv {
         } = self;
 
         tmp.clear();
-        let [a, b, c, d, e, f] = values;
+        let LogCsvRecord(a, b, c, d, e, f) = values;
         use std::fmt::Write;
         writeln!(tmp, "{a},{b},{c},{d},{e},\"crc:{f}\"",)?;
 

@@ -2,7 +2,7 @@ use std::{
     collections::{btree_map::Entry, BTreeMap},
     fs::{create_dir_all, remove_file, rename},
     io::Read,
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, DerefMut},
     path::PathBuf,
     pin::Pin,
     sync::Arc,
@@ -14,10 +14,11 @@ use anyhow::{anyhow, bail, Context, Result};
 use api_query::{
     clone,
     get_terminal_width::get_terminal_width,
-    log_csv::LogCsv,
+    log_csv::{LogCsv, LogCsvRecord},
     my_crc::{Crc, MyCrc},
     path_util::{add_extension, AppendToPath},
-    time::{Rfc3339TimeWrap, UnixTimeWrap}, types::{Queries, QueryReference, QueryReferenceWithRepetition},
+    time::{Rfc3339TimeWrap, UnixTimeWrap},
+    types::{Queries, QueryReference, QueryReferenceWithRepetition},
 };
 use clap::Parser;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -581,11 +582,11 @@ async fn main() -> Result<()> {
 
                         if let Some(log_file) = log_file {
                             let crc = crc.expect("enabling log file automatically enables crc");
-                            log_file.write_row([
-                                &query_reference,
-                                &UnixTimeWrap(start),
-                                &UnixTimeWrap(end),
-                                &end.duration_since(start)
+                            log_file.write_row(LogCsvRecord(
+                                query_reference,
+                                UnixTimeWrap(start),
+                                UnixTimeWrap(end),
+                                end.duration_since(start)
                                     .with_context(|| {
                                         anyhow!(
                                             "time difference from {} to {}",
@@ -594,9 +595,9 @@ async fn main() -> Result<()> {
                                         )
                                     })?
                                     .as_secs_f64(),
-                                &status,
-                                &crc,
-                            ])?;
+                                status,
+                                crc,
+                            ))?;
                         }
                     }
                     Ok(Err(e)) => {

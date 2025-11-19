@@ -1,9 +1,8 @@
 //! Basic types for api-query
 
-use std::{fmt::Display, ops::Range, convert::TryFrom};
+use std::{convert::TryFrom, fmt::Display, ops::Range};
 
 use anyhow::{anyhow, Result};
-
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Query<'s> {
