@@ -14,7 +14,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use api_query::{
     clone,
     get_terminal_width::get_terminal_width,
-    log_csv::{LogCsv, LogCsvRecord},
+    log_csv::{LogCsvRecord, LogCsvWriter},
     my_crc::{Crc, MyCrc},
     path_util::{add_extension, AppendToPath},
     time::{Rfc3339TimeWrap, UnixTimeWrap},
@@ -549,7 +549,7 @@ async fn main() -> Result<()> {
 
             let mut await_one_task = async |tasks: &mut FuturesUnordered<_>,
                                             running_tasks: &mut usize,
-                                            log_file: &mut Option<LogCsv>|
+                                            logger: &Option<LogCsvWriter>|
                    -> Result<()> {
                 if verbose {
                     println!("await_one_task: {running_tasks}");
@@ -580,9 +580,9 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        if let Some(log_file) = log_file {
+                        if let Some(logger) = logger {
                             let crc = crc.expect("enabling log file automatically enables crc");
-                            log_file.write_row(LogCsvRecord(
+                            logger.send(LogCsvRecord(
                                 query_reference,
                                 UnixTimeWrap(start),
                                 UnixTimeWrap(end),
@@ -622,8 +622,8 @@ async fn main() -> Result<()> {
                 Ok(())
             };
 
-            let mut log_file = if let Some(path) = &log_csv {
-                Some(LogCsv::create(path)?)
+            let logger = if let Some(path) = &log_csv {
+                Some(LogCsvWriter::create((&**path).into())?)
             } else {
                 None
             };
@@ -639,7 +639,7 @@ async fn main() -> Result<()> {
                     println!("while: {running_tasks} of {concurrency}");
                 }
                 if running_tasks >= concurrency {
-                    await_one_task(&mut tasks, &mut running_tasks, &mut log_file).await?;
+                    await_one_task(&mut tasks, &mut running_tasks, &logger).await?;
                 }
                 let task = tokio::spawn({
                     clone!(endpoint_url, client_pool, output_mode,);
@@ -669,11 +669,11 @@ async fn main() -> Result<()> {
             }
 
             while running_tasks > 0 {
-                await_one_task(&mut tasks, &mut running_tasks, &mut log_file).await?;
+                await_one_task(&mut tasks, &mut running_tasks, &logger).await?;
             }
 
-            if let Some(mut log_file) = log_file {
-                log_file.flush()?;
+            if let Some(logger) = logger {
+                logger.finish()?;
             }
 
             if collect_errors {
