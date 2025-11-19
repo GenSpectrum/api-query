@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
+use itertools::Itertools;
 use reqwest::StatusCode;
 
 use crate::{my_crc::Crc, time::UnixTimeWrap, types::QueryReference};
@@ -34,9 +35,14 @@ impl LogCsv {
         let mut log_file = BufWriter::new(
             File::create(path).with_context(|| anyhow!("opening {path:?} for writing"))?,
         );
-        log_file
-            .write_all("line in query file,start,end,d,status,crc\n".as_bytes())
-            .context("writing to CSV log file")?;
+        (|| -> Result<()> {
+            for row in itertools::Itertools::intersperse(Self::HEADER.iter(), &",") {
+                log_file.write_all(row.as_bytes())?;
+            }
+            log_file.write_all(b"\n")?;
+            Ok(())
+        })()
+        .with_context(|| anyhow!("writing to {path:?}"))?;
         Ok(Self {
             tmp: String::new(),
             path: path.to_owned(),
