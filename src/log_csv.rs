@@ -11,13 +11,18 @@ use reqwest::StatusCode;
 
 use crate::{my_crc::Crc, time::UnixTimeWrap, types::QueryReference};
 
+pub enum LogCsvResult {
+    Ok(StatusCode, Crc),
+    Err(String),
+}
+
 pub struct LogCsvRecord(
     pub QueryReference,
+    pub u32,
     pub UnixTimeWrap,
     pub UnixTimeWrap,
     pub f64,
-    pub StatusCode,
-    pub Crc,
+    pub LogCsvResult, // yielding 4 columns!
 );
 
 /// The api-query log file in CSV format
@@ -27,9 +32,18 @@ struct LogCsv {
 }
 
 impl LogCsv {
-    const NUM_COLS: usize = 6;
-    const HEADER: [&str; Self::NUM_COLS] =
-        ["line in query file", "start", "end", "d", "status", "crc"];
+    const NUM_COLS: usize = 9;
+    const HEADER: [&str; Self::NUM_COLS] = [
+        "line in query file",
+        "repetition",
+        "start",
+        "end",
+        "d",
+        "Ok/Err",
+        "status",
+        "crc",
+        "error",
+    ];
 
     fn create(path: Arc<Path>) -> Result<Self> {
         let log_file = BufWriter::new(
@@ -47,17 +61,31 @@ impl LogCsv {
     fn write_row(&mut self, values: LogCsvRecord) -> Result<()> {
         let Self { path, writer } = self;
 
-        let LogCsvRecord(a, b, c, d, e, f) = values;
+        let LogCsvRecord(a, b, c, d, e, res) = values;
         // lame, wanted to avoid allocations, but there we are (and I
         // don't want to write serde serializers).
-        let record = [
+        let mut record = [
             a.to_string(),
             b.to_string(),
             c.to_string(),
             d.to_string(),
             e.to_string(),
-            f.to_string(),
+            String::new(), // 5
+            String::new(),
+            String::new(),
+            String::new(),
         ];
+        match res {
+            LogCsvResult::Ok(status_code, crc) => {
+                record[5] = "Ok".into();
+                record[6] = status_code.to_string();
+                record[7] = crc.to_string();
+            }
+            LogCsvResult::Err(e) => {
+                record[5] = "Err".into();
+                record[8] = e;
+            }
+        }
 
         writer
             .write_record(record)

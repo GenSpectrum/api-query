@@ -23,7 +23,7 @@ impl Display for QueryReference {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct QueryReferenceWithRepetition {
     pub query_reference: QueryReference,
     pub repetition: u32,

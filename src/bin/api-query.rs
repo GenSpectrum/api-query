@@ -14,7 +14,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use api_query::{
     clone,
     get_terminal_width::get_terminal_width,
-    log_csv::{LogCsvRecord, LogCsvWriter},
+    log_csv::{LogCsvRecord, LogCsvResult, LogCsvWriter},
     my_crc::{Crc, MyCrc},
     path_util::{add_extension, AppendToPath},
     time::{Rfc3339TimeWrap, UnixTimeWrap},
@@ -243,7 +243,6 @@ struct RunQuery {
 }
 
 struct RunQueryResult {
-    query_reference: QueryReference,
     status: StatusCode,
     #[allow(unused)] // XX why is this now never read, there was no warning before?
     outsize: usize,
@@ -336,7 +335,6 @@ impl RunQuery {
             }
         }
         Ok(RunQueryResult {
-            query_reference: self.query_reference_with_repetition.query_reference,
             status,
             outsize,
             crc: digest.map(MyCrc::finalize),
@@ -535,7 +533,8 @@ async fn main() -> Result<()> {
             }
 
             struct TaskResult {
-                run_query_result: RunQueryResult,
+                query_reference_with_repetition: QueryReferenceWithRepetition,
+                run_query_result: Result<RunQueryResult>,
                 start: SystemTime,
                 end: SystemTime,
             }
@@ -560,30 +559,61 @@ async fn main() -> Result<()> {
                     .ok_or_else(|| anyhow!("no task left, BUG"))?;
                 *running_tasks -= 1;
                 match result {
-                    Ok(Ok(TaskResult {
-                        run_query_result:
-                            RunQueryResult {
-                                query_reference,
+                    Ok(TaskResult {
+                        query_reference_with_repetition,
+                        run_query_result,
+                        start,
+                        end,
+                    }) => {
+                        let opt_log_csv_result = match run_query_result {
+                            Ok(RunQueryResult {
                                 status,
                                 outsize: _,
                                 crc,
-                            },
-                        start,
-                        end,
-                    })) => {
-                        match status_tally.entry(status) {
-                            Entry::Occupied(mut occupied_entry) => {
-                                (*occupied_entry.get_mut()) += 1;
+                            }) => {
+                                match status_tally.entry(status) {
+                                    Entry::Occupied(mut occupied_entry) => {
+                                        (*occupied_entry.get_mut()) += 1;
+                                    }
+                                    Entry::Vacant(vacant_entry) => {
+                                        vacant_entry.insert(1);
+                                    }
+                                }
+
+                                if logger.is_some() {
+                                    let crc =
+                                        crc.expect("enabling log file automatically enables crc");
+                                    Some(LogCsvResult::Ok(status, crc))
+                                } else {
+                                    None
+                                }
                             }
-                            Entry::Vacant(vacant_entry) => {
-                                vacant_entry.insert(1);
+                            Err(e) => {
+                                let timestamp = SystemTime::now();
+                                num_errors += 1;
+                                let e_str = format!("{e:?}");
+                                if collect_errors {
+                                    errors.push((timestamp, e));
+                                } else {
+                                    eprintln!("error at {}: {e_str}", Rfc3339TimeWrap(timestamp));
+                                }
+                                if logger.is_some() {
+                                    Some(LogCsvResult::Err(e_str))
+                                } else {
+                                    None
+                                }
                             }
-                        }
+                        };
+
+                        let QueryReferenceWithRepetition {
+                            query_reference,
+                            repetition,
+                        } = query_reference_with_repetition;
 
                         if let Some(logger) = logger {
-                            let crc = crc.expect("enabling log file automatically enables crc");
                             logger.send(LogCsvRecord(
                                 query_reference,
+                                repetition,
                                 UnixTimeWrap(start),
                                 UnixTimeWrap(end),
                                 end.duration_since(start)
@@ -595,18 +625,8 @@ async fn main() -> Result<()> {
                                         )
                                     })?
                                     .as_secs_f64(),
-                                status,
-                                crc,
+                                opt_log_csv_result.expect("made it in logger case above"),
                             ))?;
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        let timestamp = SystemTime::now();
-                        num_errors += 1;
-                        if collect_errors {
-                            errors.push((timestamp, e));
-                        } else {
-                            eprintln!("error at {}: {e:?}", Rfc3339TimeWrap(timestamp));
                         }
                     }
                     Err(join_error) => bail!("Task panicked: {join_error}"),
@@ -628,8 +648,7 @@ async fn main() -> Result<()> {
                 None
             };
 
-            let mut tasks =
-                FuturesUnordered::<JoinHandle<Result<TaskResult, anyhow::Error>>>::new();
+            let mut tasks = FuturesUnordered::<JoinHandle<TaskResult>>::new();
             let mut query_references_with_repetitions =
                 query_references_with_repetitions(queries, &query_references);
             while let Some(query_reference_with_repetition) =
@@ -652,16 +671,16 @@ async fn main() -> Result<()> {
                         };
                         let client = client_pool.get_item();
                         let start = SystemTime::now();
-                        let run_query_result = rq
-                            .run(client, output_mode, show_repetition, queries)
-                            .await?;
+                        let run_query_result: Result<RunQueryResult> =
+                            rq.run(client, output_mode, show_repetition, queries).await;
                         let end = SystemTime::now();
 
-                        Ok(TaskResult {
+                        TaskResult {
+                            query_reference_with_repetition,
                             run_query_result,
                             start,
                             end,
-                        })
+                        }
                     }
                 });
                 running_tasks += 1;
