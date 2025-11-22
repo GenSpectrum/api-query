@@ -1,10 +1,13 @@
 use std::{
     fmt::Display,
-    time::{SystemTime, UNIX_EPOCH},
+    str::FromStr,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use anyhow::{anyhow, Context};
 use chrono::{DateTime, Local};
 
+#[derive(Debug)]
 pub struct UnixTimeWrap(pub SystemTime);
 
 impl Display for UnixTimeWrap {
@@ -15,6 +18,21 @@ impl Display for UnixTimeWrap {
             .expect("SystemTime::now is always within range")
             .as_secs_f64();
         write!(f, "{seconds}")
+    }
+}
+
+impl FromStr for UnixTimeWrap {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let x: f64 = s
+            .parse()
+            .with_context(|| anyhow!("expecting real number for unixtime"))?;
+        let d = Duration::from_secs_f64(x);
+        let t = UNIX_EPOCH
+            .checked_add(d)
+            .with_context(|| anyhow!("real number is not valid as unixtime: {x}"))?;
+        Ok(Self(t))
     }
 }
 
