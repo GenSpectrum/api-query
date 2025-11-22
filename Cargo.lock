@@ -85,6 +85,7 @@ dependencies = [
  "lazy_static",
  "ouroboros",
  "rand 0.8.5",
+ "regex",
  "reqwest",
  "terminal_size",
  "tokio",
