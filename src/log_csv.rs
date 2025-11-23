@@ -1,6 +1,7 @@
 use std::{
+    convert::TryInto,
     fs::File,
-    io::BufWriter,
+    io::{BufReader, BufWriter},
     path::Path,
     sync::{mpsc, Arc},
     thread,
@@ -9,13 +10,15 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::StatusCode;
 
-use crate::{my_crc::Crc, time::UnixTimeWrap, types::QueryReference};
+use crate::{my_crc::Crc, time::UnixTimeWrap, types::QueryReference, vec_backing::RefVecBacking};
 
+#[derive(Debug)]
 pub enum LogCsvResult {
     Ok(StatusCode, Crc),
     Err(String),
 }
 
+#[derive(Debug)]
 pub struct LogCsvRecord(
     /// Reference (line number) into the queries file
     pub QueryReference,
@@ -31,6 +34,127 @@ pub struct LogCsvRecord(
     pub LogCsvResult,
 );
 
+const NUM_COLS: usize = 9;
+const HEADER: [&str; NUM_COLS] = [
+    "line in query file",
+    "repetition",
+    "start",
+    "end",
+    "d",
+    "Ok/Err",
+    "status",
+    "crc",
+    "error",
+];
+
+pub fn parse_row(row: &[impl AsRef<str>; NUM_COLS]) -> Result<LogCsvRecord> {
+    let [line, repetition, start, end, d, ok_err, status_code, crc, error] = row;
+
+    macro_rules! let_parse {
+        { $var:ident ? $msg:expr } =>  {
+            let $var: &str = $var.as_ref();
+            let $var = $var.parse().with_context(|| anyhow!(
+                "parsing field value {:?} as {}",
+                $var,
+                $msg
+            ))?;
+        }
+    }
+
+    let_parse!(line ? "line in query file");
+    let_parse!(repetition ? "repetition");
+    let_parse!(start ? "start");
+    let_parse!(end ? "end");
+    let_parse!(d ? "d");
+
+    let ok_err = ok_err.as_ref();
+    match ok_err {
+        "Ok" => {
+            let (status_code, _) = status_code
+                .as_ref()
+                .split_once(' ')
+                .ok_or_else(|| anyhow!("expecting status code number followed by a space"))?;
+
+            let_parse!(status_code ? "HTTP status code");
+            let_parse!(crc ? "CRC");
+
+            Ok(LogCsvRecord(
+                line,
+                repetition,
+                start,
+                end,
+                d,
+                LogCsvResult::Ok(status_code, crc),
+            ))
+        }
+        "Err" => Ok(LogCsvRecord(
+            line,
+            repetition,
+            start,
+            end,
+            d,
+            LogCsvResult::Err(error.as_ref().to_owned()),
+        )),
+        _ => bail!("invalid entry in 'Ok/Err' column: {ok_err:?}"),
+    }
+}
+
+/// Iterator to read back a log file written by the LogCsv writer
+pub struct LogCsvReader {
+    path: Arc<Path>,
+    line0: usize,
+    reader: csv::Reader<BufReader<File>>,
+    stringrecord: csv::StringRecord,
+    fields: RefVecBacking<'static, str>,
+}
+
+impl LogCsvReader {
+    pub fn open(path: Arc<Path>) -> Result<Self> {
+        let log_file = BufReader::new(
+            File::open(&*path).with_context(|| anyhow!("opening {path:?} for reading"))?,
+        );
+        let reader = csv::Reader::from_reader(log_file);
+        Ok(Self {
+            path,
+            line0: 0,
+            reader,
+            stringrecord: csv::StringRecord::new(),
+            fields: RefVecBacking::new(),
+        })
+    }
+}
+
+impl Iterator for LogCsvReader {
+    type Item = Result<LogCsvRecord>;
+
+    fn next(&mut self) -> Option<Result<LogCsvRecord>> {
+        match self
+            .reader
+            .read_record(&mut self.stringrecord)
+            .with_context(|| anyhow!(""))
+        {
+            Ok(true) => {
+                let mut fields = self.fields.borrow_mut();
+                for field in &self.stringrecord {
+                    fields.push(field);
+                }
+                let sl = fields.as_slice();
+                match sl.try_into() {
+                    Ok(arf) => Some(parse_row(arf)),
+                    Err(_) => Some(Err(anyhow!(
+                        "invalid number of columns: expected {NUM_COLS}, got {} at {:?}:{}",
+                        sl.len(),
+                        self.path,
+                        self.line0 + 1
+                    ))),
+                }
+            }
+            Ok(false) => None,
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
 /// The api-query log file in CSV format
 struct LogCsv {
     path: Arc<Path>,
@@ -38,19 +162,6 @@ struct LogCsv {
 }
 
 impl LogCsv {
-    const NUM_COLS: usize = 9;
-    const HEADER: [&str; Self::NUM_COLS] = [
-        "line in query file",
-        "repetition",
-        "start",
-        "end",
-        "d",
-        "Ok/Err",
-        "status",
-        "crc",
-        "error",
-    ];
-
     fn create(path: Arc<Path>) -> Result<Self> {
         let log_file = BufWriter::new(
             File::create(&*path).with_context(|| anyhow!("opening {path:?} for writing"))?,
@@ -58,7 +169,7 @@ impl LogCsv {
 
         let mut writer = csv::Writer::from_writer(log_file);
         writer
-            .write_record(Self::HEADER)
+            .write_record(HEADER)
             .with_context(|| anyhow!("writing to CSV log file {path:?}"))?;
 
         Ok(Self { path, writer })

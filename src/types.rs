@@ -1,8 +1,13 @@
 //! Basic types for api-query
 
-use std::{convert::TryFrom, fmt::Display, ops::Range};
+use std::{
+    convert::{TryFrom, TryInto},
+    fmt::Display,
+    ops::Range,
+    str::FromStr,
+};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Query<'s> {
@@ -20,6 +25,21 @@ pub struct QueryReference {
 impl Display for QueryReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.query_index + 1)
+    }
+}
+
+impl FromStr for QueryReference {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let n = u64::from_str(s).context("parsing line number")?;
+        Ok(QueryReference {
+            query_index: n
+                .checked_sub(1)
+                .with_context(|| anyhow!("line number must be at least 1: {n}"))?
+                .try_into()
+                .context("parsing line number")?,
+        })
     }
 }
 
