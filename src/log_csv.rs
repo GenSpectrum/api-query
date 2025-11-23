@@ -12,12 +12,14 @@ use reqwest::StatusCode;
 
 use crate::{my_crc::Crc, time::UnixTimeWrap, types::QueryReference, vec_backing::RefVecBacking};
 
+/// The result of a query
 #[derive(Debug)]
 pub enum LogCsvResult {
     Ok(StatusCode, Crc),
     Err(String),
 }
 
+/// A log entry
 #[derive(Debug)]
 pub struct LogCsvRecord(
     /// Reference (line number) into the queries file
