@@ -4,6 +4,7 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt::Display,
     ops::Range,
+    path::Path,
     str::FromStr,
 };
 
@@ -107,6 +108,12 @@ impl Queries {
 
     pub fn from_lines_string(queries_string: String) -> Result<Self> {
         Self::_new(queries_string, true)
+    }
+
+    pub fn from_path(path: &Path) -> Result<Self> {
+        let s = std::fs::read_to_string(path)
+            .with_context(|| anyhow!("reading queries file {path:?}"))?;
+        Self::from_lines_string(s)
     }
 
     pub fn from_single_query(queries_string: String) -> Result<Self> {

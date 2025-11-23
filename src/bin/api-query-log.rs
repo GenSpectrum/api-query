@@ -4,15 +4,16 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use api_query::{
     auto_vec::AutoVec,
     get_terminal_width::get_terminal_width,
     log_csv::{LogCsvReader, LogCsvRecord},
     my_crc::Crc,
-    types::QueryReferenceWithRepetition,
+    types::{Queries, QueryReference, QueryReferenceWithRepetition},
 };
 use clap::Parser;
+use regex::Regex;
 
 #[derive(clap::Parser, Debug)]
 #[clap(next_line_help = true)]
@@ -26,8 +27,24 @@ struct Opts {
 
 #[derive(clap::Subcommand, Debug)]
 enum Command {
-    Debug { path: PathBuf },
-    Compare { a: PathBuf, b: PathBuf },
+    Debug {
+        path: PathBuf,
+    },
+    Compare {
+        /// Ignore queries matching this regex
+        #[clap(long)]
+        ignore: Option<Regex>,
+
+        /// Path to the matching queries file for the given CSV log
+        /// files; required if `--ignore` is given
+        #[clap(long)]
+        queries: Option<PathBuf>,
+
+        /// The first CSV log file to compare
+        a: PathBuf,
+        /// The second CSV log file to compare
+        b: PathBuf,
+    },
 }
 
 struct Sums {
@@ -85,10 +102,38 @@ impl Sums {
     }
 }
 
-fn sums_from_file(path: Arc<Path>) -> Result<Sums> {
+struct QueriesWithIgnore {
+    path: Arc<Path>,
+    queries: Queries,
+    ignore: Regex,
+}
+
+impl QueriesWithIgnore {
+    fn ignore(&self, reference: QueryReference) -> Result<bool> {
+        let query = self
+            .queries
+            .borrow_queries()
+            .get(reference.query_index_usize())
+            .ok_or_else(|| {
+                anyhow!(
+                    "query reference for line {reference} is out of range for file {:?}",
+                    self.path
+                )
+            })?;
+        Ok(self.ignore.is_match(query.string))
+    }
+}
+
+fn sums_from_file(ignore: Option<&QueriesWithIgnore>, path: Arc<Path>) -> Result<Sums> {
     let mut sums = Sums::new(path.clone());
     for record in LogCsvReader::open(path)? {
-        sums.add(&record?);
+        let record = record?;
+        if let Some(ignore) = ignore {
+            if ignore.ignore(record.query_reference())? {
+                continue;
+            }
+        }
+        sums.add(&record);
     }
     Ok(sums)
 }
@@ -103,9 +148,29 @@ fn main() -> Result<()> {
                 dbg!(record);
             }
         }
-        Command::Compare { a, b } => {
-            let a = sums_from_file(a.into())?;
-            let b = sums_from_file(b.into())?;
+        Command::Compare {
+            a,
+            b,
+            ignore,
+            queries,
+        } => {
+            let queries_with_ignore = if let Some(ignore) = ignore {
+                if let Some(queries) = queries {
+                    let path: Arc<Path> = queries.into();
+                    let queries = Queries::from_path(&*path)?;
+                    Some(QueriesWithIgnore {
+                        path,
+                        ignore,
+                        queries,
+                    })
+                } else {
+                    bail!("missing --queries option, needed for --ignore")
+                }
+            } else {
+                None
+            };
+            let a = sums_from_file(queries_with_ignore.as_ref(), a.into())?;
+            let b = sums_from_file(queries_with_ignore.as_ref(), b.into())?;
             if a.len() != b.len() {
                 bail!(
                     "the logs use differing numbers of query entries: {} vs. {}",
