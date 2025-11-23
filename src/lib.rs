@@ -1,3 +1,4 @@
+pub mod auto_vec;
 pub mod clone;
 pub mod get_terminal_width;
 pub mod log_csv;
