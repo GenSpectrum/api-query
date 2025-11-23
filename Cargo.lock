@@ -83,6 +83,7 @@ dependencies = [
  "futures",
  "itertools",
  "lazy_static",
+ "num-traits",
  "ouroboros",
  "rand 0.8.5",
  "regex",
