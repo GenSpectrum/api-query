@@ -24,8 +24,8 @@ impl MyCrc for crc_fast::Digest {
     }
 }
 
-#[derive(Debug)]
-pub struct Crc(u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Crc(pub u64);
 
 /// For now just as a decimal number
 impl Display for Crc {

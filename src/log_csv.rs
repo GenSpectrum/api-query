@@ -10,7 +10,12 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::StatusCode;
 
-use crate::{my_crc::Crc, time::UnixTimeWrap, types::QueryReference, vec_backing::RefVecBacking};
+use crate::{
+    my_crc::Crc,
+    time::UnixTimeWrap,
+    types::{QueryReference, QueryReferenceWithRepetition},
+    vec_backing::RefVecBacking,
+};
 
 /// The result of a query
 #[derive(Debug)]
@@ -35,6 +40,32 @@ pub struct LogCsvRecord(
     /// LogCsvResult is yielding 4 columns in the CSV file
     pub LogCsvResult,
 );
+
+impl LogCsvRecord {
+    pub fn query_reference(&self) -> QueryReference {
+        self.0
+    }
+    pub fn repetition(&self) -> u32 {
+        self.1
+    }
+    pub fn query_reference_with_repetition(&self) -> QueryReferenceWithRepetition {
+        QueryReferenceWithRepetition {
+            query_reference: self.query_reference(),
+            repetition: self.repetition(),
+        }
+    }
+    pub fn result(&self) -> &LogCsvResult {
+        &self.5
+    }
+    /// The CRC when there is one (non-error cases). Note: disregards
+    /// the status!
+    pub fn crc(&self) -> Option<Crc> {
+        match self.result() {
+            LogCsvResult::Ok(_status_code, crc) => Some(*crc),
+            LogCsvResult::Err(_) => None,
+        }
+    }
+}
 
 const NUM_COLS: usize = 9;
 const HEADER: [&str; NUM_COLS] = [

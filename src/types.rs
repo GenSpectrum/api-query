@@ -21,6 +21,14 @@ pub struct QueryReference {
     pub query_index: u32,
 }
 
+impl QueryReference {
+    pub fn query_index_usize(self) -> usize {
+        self.query_index
+            .try_into()
+            .expect("u32 is always fitting into usize on relevant systems")
+    }
+}
+
 /// Show line number, 1-based
 impl Display for QueryReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -43,7 +51,7 @@ impl FromStr for QueryReference {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct QueryReferenceWithRepetition {
     pub query_reference: QueryReference,
     pub repetition: u32,
