@@ -102,6 +102,8 @@ impl LogCsv {
     }
 }
 
+/// Log writer in a separate thread, with the writing end of a channel
+/// for sending it log messages.
 pub struct LogCsvWriter {
     thread: thread::JoinHandle<Result<()>>,
     channel_tx: mpsc::Sender<LogCsvRecord>,
@@ -109,6 +111,7 @@ pub struct LogCsvWriter {
 }
 
 impl LogCsvWriter {
+    /// Create a log writer running in a separate thread.
     pub fn create(path: Arc<Path>) -> Result<Self> {
         let mut log_file = LogCsv::create(path.clone())?;
         let (channel_tx, channel_rx) = mpsc::channel();
@@ -125,12 +128,14 @@ impl LogCsvWriter {
         })
     }
 
+    /// Send a log record to the writer thread / log.
     pub fn send(&self, record: LogCsvRecord) -> Result<()> {
         self.channel_tx
             .send(record)
             .with_context(|| anyhow!("sending to CSV log writer for file {:?}", self.path))
     }
 
+    /// Finish writing and flushing all buffered messages.
     pub fn finish(self) -> Result<()> {
         let Self {
             thread,
