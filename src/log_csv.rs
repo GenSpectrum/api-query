@@ -17,12 +17,18 @@ pub enum LogCsvResult {
 }
 
 pub struct LogCsvRecord(
+    /// Reference (line number) into the queries file
     pub QueryReference,
+    /// Repetition
     pub u32,
+    /// Start time of the query
     pub UnixTimeWrap,
+    /// End time of the query
     pub UnixTimeWrap,
+    /// The time difference
     pub f64,
-    pub LogCsvResult, // yielding 4 columns!
+    /// LogCsvResult is yielding 4 columns in the CSV file
+    pub LogCsvResult,
 );
 
 /// The api-query log file in CSV format
