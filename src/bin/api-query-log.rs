@@ -136,18 +136,20 @@ impl QueriesWithIgnore {
     }
 }
 
-fn sums_from_file(ignore: Option<&QueriesWithIgnore>, path: Arc<Path>) -> Result<Sums> {
+fn sums_from_file(ignore: Option<&QueriesWithIgnore>, path: Arc<Path>) -> Result<(usize, Sums)> {
     let mut sums = Sums::new(path.clone());
+    let mut num_ignored = 0;
     for record in LogCsvReader::open(path)? {
         let record = record?;
         if let Some(ignore) = ignore {
             if ignore.ignore(record.query_reference())? {
+                num_ignored += 1;
                 continue;
             }
         }
         sums.add(&record);
     }
-    Ok(sums)
+    Ok((num_ignored, sums))
 }
 
 fn main() -> Result<()> {
@@ -225,8 +227,10 @@ fn main() -> Result<()> {
             } else {
                 None
             };
-            let a = sums_from_file(queries_with_ignore.as_ref(), a.into())?;
-            let b = sums_from_file(queries_with_ignore.as_ref(), b.into())?;
+            let (num_a_original_ignored, a) =
+                sums_from_file(queries_with_ignore.as_ref(), a.into())?;
+            let (num_b_original_ignored, b) =
+                sums_from_file(queries_with_ignore.as_ref(), b.into())?;
             if a.len() != b.len() {
                 bail!(
                     "the logs use differing numbers of query entries: {} vs. {}",
@@ -235,30 +239,64 @@ fn main() -> Result<()> {
                 );
             }
             let mut num_errors: usize = 0;
+            let mut num_same: usize = 0;
+            let mut num_ignored_counted: usize = 0;
             println!("query file line\tstatus 1\tlength 1\tCRC 1\tstatus 2\tlength 2\tCRC 2\tquery string");
             for i in 0..a.len() {
-                let alen_and_sum = a.sums.get_copy(i);
-                let blen_and_sum = b.sums.get_copy(i);
-                if alen_and_sum != blen_and_sum {
-                    let line = i + 1;
-                    let query_string = if let Some((_, query)) = &path_and_queries {
-                        if let Some(query) = query.borrow_queries().get(i) {
-                            &query.string
+                match (a.seen.get_copy(i) > 0, b.seen.get_copy(i) > 0) {
+                    (false, false) => {
+                        num_ignored_counted += 1;
+                    }
+                    (true, true) => {
+                        let alen_and_sum = a.sums.get_copy(i);
+                        let blen_and_sum = b.sums.get_copy(i);
+                        if alen_and_sum == blen_and_sum {
+                            num_same += 1;
                         } else {
-                            "<error: line is not in given query file>"
+                            let line = i + 1;
+                            let query_string = if let Some((_, query)) = &path_and_queries {
+                                if let Some(query) = query.borrow_queries().get(i) {
+                                    &query.string
+                                } else {
+                                    "<error: line is not in given query file>"
+                                }
+                            } else {
+                                "<error: missing --queries option>"
+                            };
+                            let (astatus, alen, asum) = alen_and_sum;
+                            let (bstatus, blen, bsum) = blen_and_sum;
+                            println!(
+                                "{line}\t{astatus}\t{alen}\t{asum}\t{bstatus}\t{blen}\t{bsum}\t\
+                                 {query_string}"
+                            );
+                            num_errors += 1;
                         }
-                    } else {
-                        "<error: missing --queries option>"
-                    };
-                    let (astatus, alen, asum) = alen_and_sum;
-                    let (bstatus, blen, bsum) = blen_and_sum;
-                    println!(
-                        "{line}\t{astatus}\t{alen}\t{asum}\t{bstatus}\t{blen}\t{bsum}\t{query_string}"
-                    );
-                    num_errors += 1;
+                    }
+                    (aseen, bseen) => {
+                        bail!(
+                            "bug?: query line {} was seeen: in a: {aseen}, in b: {bseen}",
+                            i + 1
+                        )
+                    }
                 }
             }
-            println!("=> {num_errors} queries gave CRC differences");
+            let num_total_queries = if let Some((_path, queries)) = &path_and_queries {
+                queries.borrow_queries().len()
+            } else {
+                // If there's no queries, then we can't get the count
+                // from it, but we also don't filter, ergo can rely on
+                // the count being correct (no gaps)
+                assert_eq!(a.seen.len(), b.seen.len());
+                a.seen.len()
+            };
+            assert!(num_errors + num_same + num_ignored_counted <= num_total_queries);
+            let num_ignored_calculated =
+                num_total_queries - (num_errors + num_same + num_ignored_counted);
+            println!(
+                "=> {num_errors} queries gave CRC differences, {num_same} had the same CRC, \
+                 {num_ignored_calculated} were ignored \
+                 ({num_a_original_ignored} and {num_b_original_ignored} original queries)"
+            );
 
             for mut sums in [a, b] {
                 if !sums.errors.is_empty() {
