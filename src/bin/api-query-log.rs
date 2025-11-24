@@ -241,7 +241,11 @@ fn main() -> Result<()> {
             let mut num_errors: usize = 0;
             let mut num_same: usize = 0;
             let mut num_ignored_counted: usize = 0;
-            println!("query file line\tstatus 1\tlength 1\tCRC 1\tstatus 2\tlength 2\tCRC 2\tquery string");
+            println!(
+                "query file line\t\
+                 status 1\tlength 1\tCRC 1\t\
+                 status 2\tlength 2\tCRC 2\tquery string"
+            );
             for i in 0..a.len() {
                 match (a.seen.get_copy(i) > 0, b.seen.get_copy(i) > 0) {
                     (false, false) => {
