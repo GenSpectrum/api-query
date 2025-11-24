@@ -60,7 +60,7 @@ enum Command {
 
 struct Sums {
     path: Arc<Path>,
-    sums: AutoVec<Crc>,
+    sums: AutoVec<(usize, Crc)>,
     seen: AutoVec<u8>,
     errors: Vec<SumError>,
     successes: usize,
@@ -70,7 +70,7 @@ struct Sums {
 enum SumError {
     NonMatchingCrc {
         reference: QueryReferenceWithRepetition,
-        crc: Crc,
+        crc: (usize, Crc),
     },
 }
 
@@ -78,7 +78,7 @@ impl Sums {
     fn new(path: Arc<Path>) -> Self {
         Self {
             path,
-            sums: AutoVec::new(Crc(0)),
+            sums: AutoVec::new((13131313131313, Crc(0))),
             seen: AutoVec::new(0),
             errors: Default::default(),
             successes: Default::default(),
@@ -91,7 +91,7 @@ impl Sums {
     }
 
     fn add(&mut self, record: &LogCsvRecord) {
-        if let Some(crc) = record.crc() {
+        if let Some(crc) = record.length_and_crc() {
             let i = record.query_reference().query_index_usize();
             let now_uses = self.seen.saturating_inc(i);
             if now_uses > 1 {
@@ -234,11 +234,11 @@ fn main() -> Result<()> {
                 );
             }
             let mut num_errors: usize = 0;
-            println!("query file line\tCRC 1\tCRC 2\tquery string");
+            println!("query file line\tlength 1\tCRC 1\tlength 2\tCRC 2\tquery string");
             for i in 0..a.len() {
-                let asum = a.sums.get_copy(i);
-                let bsum = b.sums.get_copy(i);
-                if asum != bsum {
+                let alen_and_sum = a.sums.get_copy(i);
+                let blen_and_sum = b.sums.get_copy(i);
+                if alen_and_sum != blen_and_sum {
                     let line = i + 1;
                     let query_string = if let Some((_, query)) = &path_and_queries {
                         if let Some(query) = query.borrow_queries().get(i) {
@@ -249,7 +249,9 @@ fn main() -> Result<()> {
                     } else {
                         "<error: missing --queries option>"
                     };
-                    println!("{line}\t{asum}\t{bsum}\t{query_string}");
+                    let (alen, asum) = alen_and_sum;
+                    let (blen, bsum) = blen_and_sum;
+                    println!("{line}\t{alen}\t{asum}\t{blen}\t{bsum}\t{query_string}");
                     num_errors += 1;
                 }
             }
@@ -260,7 +262,7 @@ fn main() -> Result<()> {
                     num_errors += sums.errors.len();
                     println!("Errors in {:?}:", sums.path);
                     sums.errors.sort();
-                    println!("query file line\trepetition\nfirst CRC\tsubsequent CRC");
+                    println!("query file line\trepetition\tfirst len\tfirst CRC\tsubsequent len\tsubsequent CRC");
                     for sum_error in &sums.errors {
                         match sum_error {
                             SumError::NonMatchingCrc {
@@ -269,11 +271,11 @@ fn main() -> Result<()> {
                                         query_reference,
                                         repetition,
                                     },
-                                crc,
+                                crc: (len, crc),
                             } => {
-                                let first_crc =
+                                let (first_len, first_crc) =
                                     sums.sums.get_copy(query_reference.query_index_usize());
-                                println!("{query_reference}\t{repetition}\t{first_crc}\t{crc}");
+                                println!("{query_reference}\t{repetition}\t{first_len}\t{first_crc}\t{len}\t{crc}");
                             }
                         }
                     }
