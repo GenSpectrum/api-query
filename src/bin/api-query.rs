@@ -565,7 +565,7 @@ async fn main() -> Result<()> {
                         let opt_log_csv_result = match run_query_result {
                             Ok(RunQueryResult {
                                 status,
-                                outsize: _,
+                                outsize,
                                 crc,
                             }) => {
                                 match status_tally.entry(status) {
@@ -580,7 +580,7 @@ async fn main() -> Result<()> {
                                 if logger.is_some() {
                                     let crc =
                                         crc.expect("enabling log file automatically enables crc");
-                                    Some(LogCsvResult::Ok(status, crc))
+                                    Some(LogCsvResult::Ok(status, outsize, crc))
                                 } else {
                                     None
                                 }

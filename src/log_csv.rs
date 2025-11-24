@@ -20,7 +20,7 @@ use crate::{
 /// The result of a query
 #[derive(Debug)]
 pub enum LogCsvResult {
-    Ok(StatusCode, Crc),
+    Ok(StatusCode, usize, Crc),
     Err(String),
 }
 
@@ -61,13 +61,13 @@ impl LogCsvRecord {
     /// the status!
     pub fn crc(&self) -> Option<Crc> {
         match self.result() {
-            LogCsvResult::Ok(_status_code, crc) => Some(*crc),
+            LogCsvResult::Ok(_status_code, _length, crc) => Some(*crc),
             LogCsvResult::Err(_) => None,
         }
     }
 }
 
-const NUM_COLS: usize = 9;
+const NUM_COLS: usize = 10;
 const HEADER: [&str; NUM_COLS] = [
     "line in query file",
     "repetition",
@@ -76,12 +76,13 @@ const HEADER: [&str; NUM_COLS] = [
     "d",
     "Ok/Err",
     "status",
+    "length",
     "crc",
     "error",
 ];
 
 pub fn parse_row(row: &[impl AsRef<str>; NUM_COLS]) -> Result<LogCsvRecord> {
-    let [line, repetition, start, end, d, ok_err, status_code, crc, error] = row;
+    let [line, repetition, start, end, d, ok_err, status_code, length, crc, error] = row;
 
     macro_rules! let_parse {
         { $var:ident ? $msg:expr } =>  {
@@ -109,6 +110,7 @@ pub fn parse_row(row: &[impl AsRef<str>; NUM_COLS]) -> Result<LogCsvRecord> {
                 .ok_or_else(|| anyhow!("expecting status code number followed by a space"))?;
 
             let_parse!(status_code ? "HTTP status code");
+            let_parse!(length ? "length");
             let_parse!(crc ? "CRC");
 
             Ok(LogCsvRecord(
@@ -117,7 +119,7 @@ pub fn parse_row(row: &[impl AsRef<str>; NUM_COLS]) -> Result<LogCsvRecord> {
                 start,
                 end,
                 d,
-                LogCsvResult::Ok(status_code, crc),
+                LogCsvResult::Ok(status_code, length, crc),
             ))
         }
         "Err" => Ok(LogCsvRecord(
@@ -224,16 +226,18 @@ impl LogCsv {
             String::new(),
             String::new(),
             String::new(),
+            String::new(),
         ];
         match res {
-            LogCsvResult::Ok(status_code, crc) => {
+            LogCsvResult::Ok(status_code, length, crc) => {
                 record[5] = "Ok".into();
                 record[6] = status_code.to_string();
-                record[7] = crc.to_string();
+                record[7] = length.to_string();
+                record[8] = crc.to_string();
             }
             LogCsvResult::Err(e) => {
                 record[5] = "Err".into();
-                record[8] = e;
+                record[9] = e;
             }
         }
 
