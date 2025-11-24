@@ -47,6 +47,10 @@ enum Command {
         #[clap(long)]
         queries: Option<PathBuf>,
 
+        /// Show the ignored queries
+        #[clap(short, long)]
+        verbose: bool,
+
         /// The first CSV log file to compare
         a: PathBuf,
         /// The second CSV log file to compare
@@ -161,6 +165,7 @@ fn main() -> Result<()> {
             ignore,
             ignore_from,
             queries,
+            verbose,
         } => {
             let ignore_regex = if let Some(ignore) = ignore {
                 if ignore_from.is_some() {
@@ -182,11 +187,30 @@ fn main() -> Result<()> {
                 if let Some(queries) = queries {
                     let path: Arc<Path> = queries.into();
                     let queries = Queries::from_path(&*path)?;
-                    Some(QueriesWithIgnore {
+                    let queries_with_ignore = QueriesWithIgnore {
                         path,
                         ignore_regex,
                         queries,
-                    })
+                    };
+                    if verbose {
+                        for (i, query) in queries_with_ignore
+                            .queries
+                            .borrow_queries()
+                            .iter()
+                            .enumerate()
+                        {
+                            let reference = QueryReference {
+                                query_index: i as u32,
+                            };
+                            if queries_with_ignore.ignore(reference)? {
+                                println!(
+                                    "api-query-log: will ignore query from line {reference}: {:?}",
+                                    query.string
+                                );
+                            }
+                        }
+                    }
+                    Some(queries_with_ignore)
                 } else {
                     bail!("missing --queries option, needed for --ignore")
                 }
