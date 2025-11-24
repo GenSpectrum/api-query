@@ -1,10 +1,12 @@
 use std::{
+    fs::read_to_string,
     path::{Path, PathBuf},
     process::exit,
+    str::FromStr,
     sync::Arc,
 };
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use api_query::{
     auto_vec::AutoVec,
     get_terminal_width::get_terminal_width,
@@ -34,6 +36,11 @@ enum Command {
         /// Ignore queries matching this regex
         #[clap(long)]
         ignore: Option<Regex>,
+
+        /// Ignore queries matching the regex in the file with the
+        /// given path (with whitespace trimmed from the end)
+        #[clap(long)]
+        ignore_from: Option<PathBuf>,
 
         /// Path to the matching queries file for the given CSV log
         /// files; required if `--ignore` is given
@@ -105,7 +112,7 @@ impl Sums {
 struct QueriesWithIgnore {
     path: Arc<Path>,
     queries: Queries,
-    ignore: Regex,
+    ignore_regex: Regex,
 }
 
 impl QueriesWithIgnore {
@@ -120,7 +127,7 @@ impl QueriesWithIgnore {
                     self.path
                 )
             })?;
-        Ok(self.ignore.is_match(query.string))
+        Ok(self.ignore_regex.is_match(query.string))
     }
 }
 
@@ -152,15 +159,32 @@ fn main() -> Result<()> {
             a,
             b,
             ignore,
+            ignore_from,
             queries,
         } => {
-            let queries_with_ignore = if let Some(ignore) = ignore {
+            let ignore_regex = if let Some(ignore) = ignore {
+                if ignore_from.is_some() {
+                    bail!("please only give one of --ignore or --ignore-path")
+                }
+                Some(ignore)
+            } else if let Some(ignore_from) = ignore_from {
+                let string = read_to_string(&ignore_from)
+                    .with_context(|| anyhow!("reading ignore file at {ignore_from:?}"))?;
+                Some(
+                    Regex::from_str(string.trim_end())
+                        .with_context(|| anyhow!("parsing regex from file at {ignore_from:?}"))?,
+                )
+            } else {
+                None
+            };
+
+            let queries_with_ignore = if let Some(ignore_regex) = ignore_regex {
                 if let Some(queries) = queries {
                     let path: Arc<Path> = queries.into();
                     let queries = Queries::from_path(&*path)?;
                     Some(QueriesWithIgnore {
                         path,
-                        ignore,
+                        ignore_regex,
                         queries,
                     })
                 } else {
