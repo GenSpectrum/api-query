@@ -65,11 +65,10 @@ impl LogCsvRecord {
             LogCsvResult::Err(_) => None,
         }
     }
-    /// The response length and CRC when there is one (non-error
-    /// cases). Note: disregards the status!
-    pub fn length_and_crc(&self) -> Option<(usize, Crc)> {
+    /// The response info when there is one (non-error cases).
+    pub fn status_length_crc(&self) -> Option<(StatusCode, usize, Crc)> {
         match self.result() {
-            LogCsvResult::Ok(_status_code, length, crc) => Some((*length, *crc)),
+            LogCsvResult::Ok(status_code, length, crc) => Some((*status_code, *length, *crc)),
             LogCsvResult::Err(_) => None,
         }
     }

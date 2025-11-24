@@ -16,6 +16,7 @@ use api_query::{
 };
 use clap::Parser;
 use regex::Regex;
+use reqwest::StatusCode;
 
 #[derive(clap::Parser, Debug)]
 #[clap(next_line_help = true)]
@@ -60,7 +61,7 @@ enum Command {
 
 struct Sums {
     path: Arc<Path>,
-    sums: AutoVec<(usize, Crc)>,
+    sums: AutoVec<(StatusCode, usize, Crc)>,
     seen: AutoVec<u8>,
     errors: Vec<SumError>,
     successes: usize,
@@ -70,7 +71,7 @@ struct Sums {
 enum SumError {
     NonMatchingCrc {
         reference: QueryReferenceWithRepetition,
-        crc: (usize, Crc),
+        crc: (StatusCode, usize, Crc),
     },
 }
 
@@ -78,7 +79,7 @@ impl Sums {
     fn new(path: Arc<Path>) -> Self {
         Self {
             path,
-            sums: AutoVec::new((13131313131313, Crc(0))),
+            sums: AutoVec::new((StatusCode::from_u16(200).unwrap(), 13131313131313, Crc(0))),
             seen: AutoVec::new(0),
             errors: Default::default(),
             successes: Default::default(),
@@ -91,7 +92,7 @@ impl Sums {
     }
 
     fn add(&mut self, record: &LogCsvRecord) {
-        if let Some(crc) = record.length_and_crc() {
+        if let Some(crc) = record.status_length_crc() {
             let i = record.query_reference().query_index_usize();
             let now_uses = self.seen.saturating_inc(i);
             if now_uses > 1 {
@@ -234,7 +235,7 @@ fn main() -> Result<()> {
                 );
             }
             let mut num_errors: usize = 0;
-            println!("query file line\tlength 1\tCRC 1\tlength 2\tCRC 2\tquery string");
+            println!("query file line\tstatus 1\tlength 1\tCRC 1\tstatus 2\tlength 2\tCRC 2\tquery string");
             for i in 0..a.len() {
                 let alen_and_sum = a.sums.get_copy(i);
                 let blen_and_sum = b.sums.get_copy(i);
@@ -249,9 +250,11 @@ fn main() -> Result<()> {
                     } else {
                         "<error: missing --queries option>"
                     };
-                    let (alen, asum) = alen_and_sum;
-                    let (blen, bsum) = blen_and_sum;
-                    println!("{line}\t{alen}\t{asum}\t{blen}\t{bsum}\t{query_string}");
+                    let (astatus, alen, asum) = alen_and_sum;
+                    let (bstatus, blen, bsum) = blen_and_sum;
+                    println!(
+                        "{line}\t{astatus}\t{alen}\t{asum}\t{bstatus}\t{blen}\t{bsum}\t{query_string}"
+                    );
                     num_errors += 1;
                 }
             }
@@ -262,7 +265,10 @@ fn main() -> Result<()> {
                     num_errors += sums.errors.len();
                     println!("Errors in {:?}:", sums.path);
                     sums.errors.sort();
-                    println!("query file line\trepetition\tfirst len\tfirst CRC\tsubsequent len\tsubsequent CRC");
+                    println!(
+                        "query file line\trepetition\tfirst status\nfirst len\tfirst CRC\t\
+                         subsequent status\tsubsequent len\tsubsequent CRC"
+                    );
                     for sum_error in &sums.errors {
                         match sum_error {
                             SumError::NonMatchingCrc {
@@ -271,11 +277,13 @@ fn main() -> Result<()> {
                                         query_reference,
                                         repetition,
                                     },
-                                crc: (len, crc),
+                                crc: (status, len, crc),
                             } => {
-                                let (first_len, first_crc) =
+                                let (first_status, first_len, first_crc) =
                                     sums.sums.get_copy(query_reference.query_index_usize());
-                                println!("{query_reference}\t{repetition}\t{first_len}\t{first_crc}\t{len}\t{crc}");
+                                println!(
+                                    "{query_reference}\t{repetition}\t{first_status}\t{first_len}\t\
+                                     {first_crc}\t{status}\t{len}\t{crc}");
                             }
                         }
                     }
