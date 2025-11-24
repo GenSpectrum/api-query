@@ -115,7 +115,7 @@ impl Sums {
 
 struct QueriesWithIgnore {
     path: Arc<Path>,
-    queries: Queries,
+    queries: Arc<Queries>,
     ignore_regex: Regex,
 }
 
@@ -183,14 +183,21 @@ fn main() -> Result<()> {
                 None
             };
 
+            let path_and_queries: Option<(Arc<Path>, Arc<Queries>)> = if let Some(queries) = queries
+            {
+                let path: Arc<Path> = queries.into();
+                let queries = Queries::from_path(&*path)?;
+                Some((path, queries.into()))
+            } else {
+                None
+            };
+
             let queries_with_ignore = if let Some(ignore_regex) = ignore_regex {
-                if let Some(queries) = queries {
-                    let path: Arc<Path> = queries.into();
-                    let queries = Queries::from_path(&*path)?;
+                if let Some((path, queries)) = &path_and_queries {
                     let queries_with_ignore = QueriesWithIgnore {
-                        path,
+                        path: path.clone(),
                         ignore_regex,
-                        queries,
+                        queries: queries.clone(),
                     };
                     if verbose {
                         for (i, query) in queries_with_ignore
@@ -227,13 +234,22 @@ fn main() -> Result<()> {
                 );
             }
             let mut num_errors: usize = 0;
-            println!("query file line\tCRC 1\tCRC 2");
+            println!("query file line\tCRC 1\tCRC 2\tquery string");
             for i in 0..a.len() {
                 let asum = a.sums.get_copy(i);
                 let bsum = b.sums.get_copy(i);
                 if asum != bsum {
                     let line = i + 1;
-                    println!("{line}\t{asum}\t{bsum}");
+                    let query_string = if let Some((_, query)) = &path_and_queries {
+                        if let Some(query) = query.borrow_queries().get(i) {
+                            &query.string
+                        } else {
+                            "<error: line is not in given query file>"
+                        }
+                    } else {
+                        "<error: missing --queries option>"
+                    };
+                    println!("{line}\t{asum}\t{bsum}\t{query_string}");
                     num_errors += 1;
                 }
             }
