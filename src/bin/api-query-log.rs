@@ -299,7 +299,7 @@ fn main() -> Result<()> {
             println!(
                 "=> {num_errors} queries gave CRC differences, {num_same} had the same CRC, \
                  {num_ignored_calculated} were ignored \
-                 ({num_a_original_ignored} and {num_b_original_ignored} original queries)"
+                 ({num_a_original_ignored} and {num_b_original_ignored} requests)"
             );
 
             for mut sums in [a, b] {
