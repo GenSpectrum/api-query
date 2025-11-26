@@ -111,6 +111,7 @@ pub fn parse_row(row: &[impl AsRef<str>; NUM_COLS]) -> Result<LogCsvRecord> {
     let ok_err = ok_err.as_ref();
     match ok_err {
         "Ok" => {
+            // Split "200 OK" into just "200"
             let (status_code, _) = status_code
                 .as_ref()
                 .split_once(' ')
