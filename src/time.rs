@@ -1,5 +1,6 @@
 use std::{
     fmt::Display,
+    ops::Deref,
     str::FromStr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -46,5 +47,13 @@ pub struct Rfc3339TimeWrap(pub SystemTime);
 impl Display for Rfc3339TimeWrap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&system_time_to_rfc3339(self.0))
+    }
+}
+
+impl Deref for UnixTimeWrap {
+    type Target = SystemTime;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
