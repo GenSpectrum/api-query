@@ -170,21 +170,32 @@ fn main() -> Result<()> {
             queries,
             verbose,
         } => {
-            let ignore_regex = if let Some(ignore) = ignore {
-                if ignore_from.is_some() {
-                    bail!("please only give one of --ignore or --ignore-path")
-                }
-                Some(ignore)
-            } else if let Some(ignore_from) = ignore_from {
-                let string = read_to_string(&ignore_from)
-                    .with_context(|| anyhow!("reading ignore file at {ignore_from:?}"))?;
-                Some(
-                    Regex::from_str(string.trim_end())
-                        .with_context(|| anyhow!("parsing regex from file at {ignore_from:?}"))?,
-                )
-            } else {
-                None
-            };
+            let ignore_regex =
+                if let Some(ignore) = ignore {
+                    if ignore_from.is_some() {
+                        bail!("please only give one of --ignore or --ignore-path")
+                    }
+                    Some(ignore)
+                } else if let Some(ignore_from) = ignore_from {
+                    let string = read_to_string(&ignore_from)
+                        .with_context(|| anyhow!("reading ignore file at {ignore_from:?}"))?;
+                    let re = string.trim_end();
+                    if re.is_empty() {
+                        if verbose {
+                            eprintln!(
+                                "ignoring --ignore-from file {ignore_from:?} since it is empty; \
+                                 if you want to match a space, please append `{{1}}`"
+                            );
+                        }
+                        None
+                    } else {
+                        Some(Regex::from_str(re).with_context(|| {
+                            anyhow!("parsing regex from file at {ignore_from:?}")
+                        })?)
+                    }
+                } else {
+                    None
+                };
 
             let path_and_queries: Option<(Arc<Path>, Arc<Queries>)> = if let Some(queries) = queries
             {
