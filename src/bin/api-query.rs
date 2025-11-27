@@ -14,7 +14,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use api_query::{
     clone,
     get_terminal_width::get_terminal_width,
-    log_csv::{LogCsvRecord, LogCsvResult, LogCsvWriter},
+    log_csv::{LogCsvNormalFormat, LogCsvRecord, LogCsvResult, LogCsvWriter},
     my_crc::{Crc, MyCrc},
     path_util::{add_extension, AppendToPath},
     time::{Rfc3339TimeWrap, UnixTimeWrap},
@@ -141,7 +141,8 @@ enum Command {
 
         /// Path to where an output file in CSV format should be
         /// written, with a line for each executed query, with start
-        /// and end times, return status, and CRC.
+        /// and end times, return status, and CRC. Overwrites existing
+        /// files.
         #[clap(long)]
         log_csv: Option<PathBuf>,
 
@@ -492,7 +493,7 @@ async fn main() -> Result<()> {
 
             let show_repetition = repeat != 1;
 
-            let queries: &Queries = Box::leak(Box::new(Queries::from_path(&queries_path)?));
+            let queries: Arc<Queries> = Arc::new(Queries::from_path(&queries_path)?);
 
             let query_references = {
                 let mut query_references: Vec<QueryReference> = Vec::new();
@@ -514,7 +515,7 @@ async fn main() -> Result<()> {
 
             if dry_run {
                 for query_reference_with_repetition in
-                    query_references_with_repetitions(queries, &query_references)
+                    query_references_with_repetitions(&queries, &query_references)
                 {
                     println!(
                         "{query_reference_with_repetition:?}: {}",
@@ -545,7 +546,7 @@ async fn main() -> Result<()> {
 
             let mut await_one_task = async |tasks: &mut FuturesUnordered<_>,
                                             running_tasks: &mut usize,
-                                            logger: &Option<LogCsvWriter>|
+                                            logger: &Option<LogCsvWriter<LogCsvNormalFormat>>|
                    -> Result<()> {
                 if verbose {
                     println!("await_one_task: {running_tasks}");
@@ -640,14 +641,18 @@ async fn main() -> Result<()> {
             };
 
             let logger = if let Some(path) = &log_csv {
-                Some(LogCsvWriter::create((&**path).into())?)
+                Some(LogCsvWriter::create(
+                    (&**path).into(),
+                    true,
+                    LogCsvNormalFormat,
+                )?)
             } else {
                 None
             };
 
             let mut tasks = FuturesUnordered::<JoinHandle<TaskResult>>::new();
             let mut query_references_with_repetitions =
-                query_references_with_repetitions(queries, &query_references);
+                query_references_with_repetitions(&queries, &query_references);
             while let Some(query_reference_with_repetition) =
                 query_references_with_repetitions.next()
             {
@@ -660,6 +665,7 @@ async fn main() -> Result<()> {
                 let task = tokio::spawn({
                     clone!(endpoint_url, client_pool, output_mode,);
                     let calculate_crc = log_csv.is_some();
+                    let queries = queries.clone();
                     async move {
                         let rq = RunQuery {
                             query_reference_with_repetition,
@@ -669,7 +675,7 @@ async fn main() -> Result<()> {
                         let client = client_pool.get_item();
                         let start = SystemTime::now();
                         let run_query_result: Result<RunQueryResult> =
-                            rq.run(client, output_mode, show_repetition, queries).await;
+                            rq.run(client, output_mode, show_repetition, &queries).await;
                         let end = SystemTime::now();
 
                         TaskResult {

@@ -3,14 +3,14 @@ use std::{
     path::{Path, PathBuf},
     process::exit,
     str::FromStr,
-    sync::Arc,
+    sync::{mpsc::SendError, Arc},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use api_query::{
     auto_vec::AutoVec,
     get_terminal_width::get_terminal_width,
-    log_csv::{LogCsvReader, LogCsvRecord},
+    log_csv::{LogCsvExtendedFormat, LogCsvReader, LogCsvRecord, LogCsvWriter},
     my_crc::Crc,
     types::{Queries, QueryReference, QueryReferenceWithRepetition},
 };
@@ -33,6 +33,27 @@ enum Command {
     Debug {
         path: PathBuf,
     },
+
+    /// Add another column to a CSV log file, with a copy of the query
+    /// string that was used, as per the line column.
+    Expand {
+        /// Overwrite the output file if it exists
+        #[clap(short, long)]
+        force: bool,
+
+        /// Path to the matching queries file for the given CSV log
+        /// files
+        queries: PathBuf,
+
+        /// Path to the existing log file
+        input: PathBuf,
+
+        /// Path to where the file with the additional column should
+        /// be written
+        output: PathBuf,
+    },
+
+    /// Compare two api-query CSV log files
     Compare {
         /// Ignore queries matching this regex
         #[clap(long)]
@@ -162,6 +183,37 @@ fn main() -> Result<()> {
                 dbg!(record);
             }
         }
+
+        Command::Expand {
+            force,
+            queries,
+            input,
+            output,
+        } => {
+            let input = input.into();
+            let output = output.into();
+            let queries = Queries::from_path(&queries)?.into();
+            let log = LogCsvReader::open(input)?;
+            let format = LogCsvExtendedFormat { queries };
+            let out = LogCsvWriter::create(output, force, format)?;
+            enum E {
+                Anyhow(anyhow::Error),
+                Sendfail(SendError<LogCsvRecord>),
+            }
+            match (|| -> Result<(), E> {
+                for msg in log {
+                    let msg = msg.map_err(E::Anyhow)?;
+                    out.send(msg).map_err(E::Sendfail)?;
+                }
+                Ok(())
+            })() {
+                Ok(()) => {}
+                Err(E::Anyhow(e)) => Err(e)?,
+                Err(E::Sendfail(e)) => drop(e),
+            }
+            out.finish()?;
+        }
+
         Command::Compare {
             a,
             b,

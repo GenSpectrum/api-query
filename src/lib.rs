@@ -1,5 +1,6 @@
 pub mod auto_vec;
 pub mod clone;
+pub mod cowstr;
 pub mod get_terminal_width;
 pub mod log_csv;
 pub mod my_crc;
