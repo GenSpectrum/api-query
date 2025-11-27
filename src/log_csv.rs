@@ -294,7 +294,7 @@ impl<F: Format> LogCsv<F> {
         let LogCsvRecord(a, b, c, d, e, res) = values;
         // lame, wanted to avoid allocations, but there we are (and I
         // don't want to write serde serializers).
-        let mut record: [Cowstr; _] = [
+        let mut record: [Cowstr; 11] = [
             a.to_string().into(),
             b.to_string().into(),
             c.to_string().into(),
