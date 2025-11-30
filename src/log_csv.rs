@@ -292,21 +292,19 @@ impl<F: Format> LogCsv<F> {
         } = self;
 
         let LogCsvRecord(a, b, c, d, e, res) = values;
-        // lame, wanted to avoid allocations, but there we are (and I
-        // don't want to write serde serializers).
         let mut record: [Cowstr; 11] = [
             a.to_string().into(),
             b.to_string().into(),
             c.to_string().into(),
             d.to_string().into(),
             e.to_string().into(),
-            "".into(), // 5
+            "".into(), // index 5
             "".into(),
             "".into(),
             "".into(),
             "".into(),
             // only used if `queries` was given
-            "".into(), // 10
+            "".into(), // index 10
         ];
         match res {
             LogCsvResult::Ok(status_code, length, crc) => {
