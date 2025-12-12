@@ -16,10 +16,10 @@ use api_query::{
     get_terminal_width::get_terminal_width,
     log_csv::{LogCsvNormalFormat, LogCsvRecord, LogCsvResult, LogCsvWriter},
     my_crc::{Crc, MyCrc},
-    path_util::{add_extension, AppendToPath},
     time::{Rfc3339TimeWrap, UnixTimeWrap},
     types::{Queries, QueryReference, QueryReferenceWithRepetition},
 };
+use cj_path_util::{path_util::AppendToPath, unix::polyfill::add_extension};
 use clap::Parser;
 use futures::stream::{FuturesUnordered, StreamExt};
 use rand::seq::SliceRandom;
@@ -328,8 +328,8 @@ impl RunQuery {
                     remove_file(&outpath)
                         .with_context(|| anyhow!("removing output file {outpath:?}"))?
                 } else {
-                    let mut with_extension = outpath.clone();
-                    add_extension(&mut with_extension, format!("{status}"));
+                    let with_extension = add_extension(&outpath, format!("{status}"))
+                        .ok_or_else(|| anyhow!("can't add extension to path {outpath:?}"))?;
                     rename(&outpath, &with_extension)
                         .with_context(|| anyhow!("renaming {outpath:?} to {with_extension:?}"))?;
                 }
