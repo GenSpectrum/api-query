@@ -18,6 +18,10 @@ use clap::Parser;
 use regex::Regex;
 use reqwest::StatusCode;
 
+fn is_any_error(status: StatusCode) -> bool {
+    status.is_client_error() || status.is_server_error()
+}
+
 #[derive(clap::Parser, Debug)]
 #[clap(next_line_help = true)]
 #[clap(set_term_width = get_terminal_width())]
@@ -63,6 +67,12 @@ enum Command {
         /// given path (with whitespace trimmed from the end)
         #[clap(long)]
         ignore_from: Option<PathBuf>,
+
+        /// Do not report differences in messages from HTTP error
+        /// responses as errors (those are still printed and counted
+        /// in the "CRC differences in error responses" number)
+        #[clap(long)]
+        accept_error_differences: bool,
 
         /// Path to the matching queries file for the given CSV log
         /// files; required if `--ignore` is given
@@ -219,6 +229,7 @@ fn main() -> Result<()> {
             b,
             ignore,
             ignore_from,
+            accept_error_differences,
             queries,
             verbose,
         } => {
@@ -301,7 +312,16 @@ fn main() -> Result<()> {
                     b.len()
                 );
             }
+            // The number of hard errors, i.e. a count > 0 is reported
+            // with an error exit status (only includes differences
+            // in HTTP error responses if --accept-error-differences
+            // was not given)
             let mut num_errors: usize = 0;
+            // The number of differences in HTTP error responses
+            // (regardless of whether --accept-error-differences was
+            // given)
+            let mut num_error_errors: usize = 0;
+            let mut num_ignored_error_differences: usize = 0;
             let mut num_same: usize = 0;
             let mut num_ignored_counted: usize = 0;
             println!(
@@ -336,7 +356,16 @@ fn main() -> Result<()> {
                                 "{line}\t{astatus}\t{alen}\t{asum}\t{bstatus}\t{blen}\t{bsum}\t\
                                  {query_string}"
                             );
-                            num_errors += 1;
+                            let is_error_difference = astatus == bstatus && is_any_error(bstatus);
+                            if is_error_difference {
+                                num_error_errors += 1;
+                            }
+                            if is_error_difference && accept_error_differences {
+                                // do not count as 'hard' error
+                                num_ignored_error_differences += 1;
+                            } else {
+                                num_errors += 1;
+                            }
                         }
                     }
                     (aseen, bseen) => {
@@ -357,13 +386,18 @@ fn main() -> Result<()> {
                 a.seen.len()
             };
             assert!(num_errors + num_same + num_ignored_counted <= num_total_queries);
-            let num_ignored_calculated =
-                num_total_queries - (num_errors + num_same + num_ignored_counted);
+            let num_ignored_calculated = num_total_queries
+                - (num_errors + num_same + num_ignored_counted)
+                - num_ignored_error_differences;
             println!(
-                "=> {num_errors} queries gave CRC differences, {num_same} had the same CRC, \
-                 {num_ignored_calculated} were ignored \
+                "=> {num_errors} queries gave CRC differences to be treated as errors, \
+                 {num_error_errors} queries gave CRC differences in HTTP error responses, \
+                 {num_same} had the same CRC, \
+                 {num_ignored_calculated} were ignored via regex \
                  ({num_a_original_ignored} and {num_b_original_ignored} requests)"
             );
+            // ^ XX what are the `num_*_original_ignored` again? They can
+            //      be non-zero while `num_ignored_calculated` is 0.
 
             for mut sums in [a, b] {
                 if !sums.errors.is_empty() {
